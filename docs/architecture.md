@@ -7,6 +7,7 @@
 - `Basilisk II`
 - direct SDL console mode
 - Proxmox graphical console as the primary display path
+- Debian 12 minimal as the supported bootstrap base
 
 ## Disk Layout
 
@@ -43,9 +44,17 @@ Dedicated HFS `Macintosh HD`.
 
 Attached directly to Basilisk as the internal Mac hard disk.
 
-## Guest Runtime
+## Bootstrap Runtime
 
-The guest runtime is driven by:
+The public install path is:
+
+1. create a Debian 12 VM in Proxmox
+2. attach `scsi1`, `scsi2`, and `scsi3`
+3. run `scripts/install-on-debian.sh`
+4. let `retro-mac-firstboot` prepare the appliance disks
+5. convert the VM into a template or clone it directly
+
+The guest runtime itself is driven by:
 
 - `retro-mac-firstboot.service`
 - `retro-mac-session.service`
@@ -69,4 +78,3 @@ The current design is optimized for:
 - low moving-part count
 
 This is why `v0.1` does not default to `noVNC`.
-

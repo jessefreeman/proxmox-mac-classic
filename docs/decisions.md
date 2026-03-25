@@ -45,3 +45,13 @@ Why:
 - easy to populate with multiple Mac image files
 - easy to scan deterministically from guest scripts
 
+## Bootstrap Installer Over Fat Appliance Downloads
+
+The main public path is now a bootstrap installer, not a large prebuilt VM image.
+
+Why:
+
+- easier to reproduce from a normal Debian 12 VM
+- much smaller public distribution surface
+- easier to review than a giant opaque appliance image
+- avoids shipping unnecessary OS payload when the repo can install the appliance in place

@@ -2,27 +2,35 @@
 
 ## Build From Source
 
+Recommended public path:
+
+```bash
+git clone https://github.com/jessefreeman/proxmox-mac-classic.git
+cd proxmox-mac-classic
+sudo ./scripts/install-on-debian.sh
+```
+
+This bootstraps the appliance onto a normal Debian 12 VM.
+
+## Build Proxmox Template From Source
+
 Run:
 
 ```bash
 ./scripts/build-retro-mac-templates.sh
-./scripts/build-release-artifact.sh
 ```
 
 This produces:
 
 - Proxmox template `260`
 - validation clone if smoke tests are enabled
-- release archive under `releases/`
 
-## Import From Release
+## Optional Release Artifact Export
 
-On the Proxmox host:
+If you want a portable release bundle after building the template:
 
 ```bash
-tar -xzf proxmox-mac-classic-v0.1.0-appliance.tar.gz -C /root/proxmox-mac-classic-v0.1.0
-cd /root/proxmox-mac-classic-v0.1.0
-./import-release-to-proxmox.sh .
+./scripts/build-release-artifact.sh
 ```
 
 ## Clone The Template
@@ -43,4 +51,3 @@ Inside the clone:
 ## Install
 
 Boot from helper media, install to `Macintosh HD`, then remove helper media and reboot.
-

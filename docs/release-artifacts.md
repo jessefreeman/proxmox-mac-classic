@@ -1,5 +1,11 @@
 # Release Artifacts
 
+The release archive path is optional.
+
+The recommended public install path is the Debian bootstrap installer in [`scripts/install-on-debian.sh`](../scripts/install-on-debian.sh).
+
+Use release artifacts when you specifically want to export an already-built appliance or mirror it across Proxmox hosts.
+
 ## Archive Contents
 
 The `v0.1` release archive contains:
@@ -43,4 +49,3 @@ shasum -a 256 -c SHA256SUMS
 ```
 
 before importing.
-

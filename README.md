@@ -13,45 +13,50 @@ Turnkey Proxmox appliance for classic Macintosh emulation with `Basilisk II`.
   - `scsi2` removable media slot
   - `scsi3` dedicated `Macintosh HD`
 
-The goal is simple: import a ready-made Proxmox appliance, provide your own ROM and Mac disks, and boot straight into a classic Mac in the Proxmox graphical console.
+The goal is simple: start from a minimal Debian 12 VM in Proxmox, run one installer command, provide your own ROM and Mac disks, and boot straight into a classic Mac in the Proxmox graphical console.
 
 ![Working Proxmox Mac Classic Template](assets/working-template.png)
 
 ## Quickstart
 
-### 1. Build or download the release artifact
+### 1. Create a Debian 12 VM in Proxmox
 
-To build from source:
+Create a Debian 12 minimal VM with this hardware layout:
+
+- `scsi0`: Debian 12 OS disk
+- `scsi1`: blank persistent data disk
+- `scsi2`: blank removable media slot disk
+- `scsi3`: blank dedicated `Macintosh HD` disk
+- `virtio` VGA
+- `tablet=1`
+- `2` vCPU
+- `3072 MB` RAM
+
+Install Debian 12, enable SSH, then clone this repo inside the guest.
+
+### 2. Run the one-command installer
+
+Safer repo-based flow:
 
 ```bash
-./scripts/build-retro-mac-templates.sh
-./scripts/build-release-artifact.sh
+git clone https://github.com/jessefreeman/proxmox-mac-classic.git
+cd proxmox-mac-classic
+sudo ./scripts/install-on-debian.sh
 ```
 
-That produces:
-
-- `releases/proxmox-mac-classic-v0.1.0-appliance.tar.gz`
-
-### 2. Import the appliance into Proxmox
-
-Copy the release archive to a Proxmox host, extract it, then run:
+One-line bootstrap flow:
 
 ```bash
-tar -xzf proxmox-mac-classic-v0.1.0-appliance.tar.gz -C /root/proxmox-mac-classic-v0.1.0
-cd /root/proxmox-mac-classic-v0.1.0
-./import-release-to-proxmox.sh .
+curl -fsSL https://raw.githubusercontent.com/jessefreeman/proxmox-mac-classic/main/scripts/install-on-debian.sh | sudo bash
 ```
 
-By default that imports:
-
-- VMID `260`
-- name `retro-mac-basilisk-template`
-
-### 3. Clone the template
+### 3. Convert it into a template
 
 Example:
 
 ```bash
+qm shutdown 260
+qm template 260
 qm clone 260 362 --name retro-mac-basilisk-install-test --full 1
 qm start 362
 ```
@@ -74,16 +79,12 @@ Provide your own legal `Mac IIci` ROM in the clone at:
 
 The media slot is `scsi2`.
 
-Inside the Linux guest, the appliance mounts that slot under:
+Inside the Linux guest, the appliance mounts that slot under `/run/retro-mac-media/<device>` after `retro-mac-session` or `retro-mac-firstboot` runs.
 
-```text
-/run/retro-mac-media/<device>
-```
-
-Use the helper script to populate it:
+The easiest way to populate it is from inside the guest:
 
 ```bash
-sudo ./scripts/prepare-media-slot.sh /run/retro-mac-media/sdc /path/to/System7_5_3.img
+sudo retro-mac-prepare-media-slot /run/retro-mac-media/sdc /path/to/System7_5_3.img
 sudo systemctl restart retro-mac-session
 ```
 
@@ -128,6 +129,7 @@ You must provide your own legal:
 
 ## Repo Contents
 
+- [`scripts/install-on-debian.sh`](scripts/install-on-debian.sh)
 - [`scripts/build-retro-mac-templates.sh`](scripts/build-retro-mac-templates.sh)
 - [`scripts/build-release-artifact.sh`](scripts/build-release-artifact.sh)
 - [`scripts/import-release-to-proxmox.sh`](scripts/import-release-to-proxmox.sh)

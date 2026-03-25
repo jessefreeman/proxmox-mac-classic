@@ -4,6 +4,7 @@
 
 Recommended roles:
 
+- base Debian bootstrap VM
 - installer-ready base template
 - proof clone
 - configured gold-master clone
@@ -25,6 +26,18 @@ Restart the appliance:
 sudo systemctl restart retro-mac-session
 ```
 
+Run the installer on a fresh Debian 12 VM:
+
+```bash
+sudo ./scripts/install-on-debian.sh
+```
+
+Prepare a VM to become a reusable Proxmox template:
+
+```bash
+sudo ./scripts/install-on-debian.sh --prepare-template
+```
+
 Check generated prefs:
 
 ```bash
@@ -41,7 +54,7 @@ Validate guest layout:
 
 ```bash
 sudo /usr/local/bin/retro-mac-healthcheck
-sudo /path/to/scripts/validate-retro-mac-layout.sh
+sudo retro-mac-validate-layout
 ```
 
 ## Known Good Defaults
@@ -52,4 +65,3 @@ sudo /path/to/scripts/validate-retro-mac-layout.sh
 - `virtio` VGA
 - `tablet=1`
 - direct SDL console mode
-
