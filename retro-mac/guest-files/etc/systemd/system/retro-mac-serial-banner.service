@@ -1,0 +1,17 @@
+[Unit]
+Description=Show retro-Mac appliance status on serial console
+After=retro-mac-session.service
+Wants=retro-mac-session.service
+ConditionPathExists=/dev/ttyS0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/retro-mac-serial-banner
+StandardOutput=tty
+TTYPath=/dev/ttyS0
+TTYReset=yes
+TTYVHangup=yes
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source /usr/local/bin/retro-mac-common
+
+log() {
+  printf '[retro-mac-firstboot] %s\n' "$*"
+}
+
+create_hfs_image() {
+  local image_path="$1"
+  local size="$2"
+  local volume_name="$3"
+
+  if [[ -b "$image_path" ]]; then
+    if blkid "$image_path" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    log "Formatting block device $image_path as HFS ($volume_name)"
+    mkfs.hfs -v "$volume_name" "$image_path"
+    return 0
+  fi
+
+  if [[ -f "$image_path" ]]; then
+    return 0
+  fi
+
+  log "Creating HFS image $image_path ($size, $volume_name)"
+  install -d -m 755 "$(dirname "$image_path")"
+  truncate -s "$size" "$image_path"
+  mkfs.hfs -v "$volume_name" "$image_path"
+  set_hfs_volume_name "$image_path" "$volume_name"
+}
+
+set_hfs_volume_name() {
+  local image_path="$1"
+  local volume_name="$2"
+
+  python3 - "$image_path" "$volume_name" <<'PY'
+from pathlib import Path
+import sys
+
+image = Path(sys.argv[1])
+name = sys.argv[2].encode("mac_roman", errors="replace")[:27]
+
+offsets = [1024 + 36, image.stat().st_size - 1024 + 36]
+payload = bytes([len(name)]) + name + bytes(27 - len(name))
+
+with image.open("r+b") as fh:
+    for offset in offsets:
+        fh.seek(offset)
+        fh.write(payload)
+PY
+}
+
+populate_mac_exchange() {
+  local image_path="$1"
+  local mount_point="/mnt/mac-exchange-loop"
+  local loopdev=""
+
+  modprobe loop >/dev/null 2>&1 || true
+  modprobe hfs >/dev/null 2>&1 || true
+
+  loopdev="$(losetup -f)"
+  losetup "$loopdev" "$image_path"
+
+  install -d -m 755 "$mount_point"
+  mount -t hfs "$loopdev" "$mount_point"
+
+  install -d -m 755 \
+    "$mount_point/MacDisks" \
+    "$mount_point/Imports" \
+    "$mount_point/Exports" \
+    "$mount_point/HyperCard" \
+    "$mount_point/Games" \
+    "$mount_point/Archives"
+
+  cat >"$mount_point/README.txt" <<'EOF'
+Mac Exchange
+
+This is a real HFS transfer disk attached to Basilisk II.
+Put installers, disk images, HyperCard stacks, and exported files here.
+EOF
+
+  if [[ -f "${RETRO_MAC_SHARED_DIR}/stuffit_expander_55.bin" ]]; then
+    cp -f "${RETRO_MAC_SHARED_DIR}/stuffit_expander_55.bin" "$mount_point/StuffIt_Expander_5.5.bin"
+  fi
+
+  sync
+  umount "$mount_point"
+  losetup -d "$loopdev"
+}
+
+ensure_user() {
+  if ! id "$RETRO_MAC_USER" >/dev/null 2>&1; then
+    useradd -m -s /bin/bash "$RETRO_MAC_USER"
+  fi
+}
+
+prepare_data_disk() {
+  local root_source root_disk candidate
+  root_source="$(findmnt -n -o SOURCE / || true)"
+  root_disk="$(lsblk -ndo PKNAME "$root_source" 2>/dev/null || true)"
+
+  if [[ -z "$root_disk" ]]; then
+    root_disk="$(basename "$root_source" | sed 's/[0-9].*$//')"
+  fi
+
+  candidate="$(
+    lsblk -rno NAME,TYPE,FSTYPE |
+      awk -v root="$root_disk" '$2 == "disk" && $1 != root && $3 == "" { print $1; exit }'
+  )"
+
+  if [[ -n "$candidate" ]]; then
+    log "Formatting /dev/${candidate} as ${RETRO_MAC_DATA_LABEL}"
+    mkfs.ext4 -F -L "$RETRO_MAC_DATA_LABEL" "/dev/${candidate}"
+  fi
+}
+
+ensure_mount() {
+  install -d -m 755 "$RETRO_MAC_DATA_MOUNT"
+
+  if ! grep -q "LABEL=${RETRO_MAC_DATA_LABEL} ${RETRO_MAC_DATA_MOUNT} " /etc/fstab; then
+    echo "LABEL=${RETRO_MAC_DATA_LABEL} ${RETRO_MAC_DATA_MOUNT} ext4 defaults,nofail 0 2" >> /etc/fstab
+  fi
+
+  mount "$RETRO_MAC_DATA_MOUNT" || mount -a || true
+}
+
+ensure_layout() {
+  install -d -m 755 "$RETRO_MAC_RUNTIME_DIR" "$RETRO_MAC_HOME" "$RETRO_MAC_EXPORTS_DIR"
+  install -d -m 755 \
+    "${RETRO_MAC_DATA_MOUNT}/roms" \
+    "${RETRO_MAC_DATA_MOUNT}/images" \
+    "${RETRO_MAC_DATA_MOUNT}/shared" \
+    "${RETRO_MAC_DATA_MOUNT}/exports"
+
+  rm -rf "$RETRO_MAC_ROMS_DIR" "$RETRO_MAC_IMAGES_DIR" /var/lib/retro-mac/shared
+  ln -sfn "${RETRO_MAC_DATA_MOUNT}/roms" "$RETRO_MAC_ROMS_DIR"
+  ln -sfn "${RETRO_MAC_DATA_MOUNT}/images" "$RETRO_MAC_IMAGES_DIR"
+  ln -sfn "${RETRO_MAC_DATA_MOUNT}/shared" /var/lib/retro-mac/shared
+
+  chown -R "$RETRO_MAC_USER:$RETRO_MAC_USER" /var/lib/retro-mac "$RETRO_MAC_DATA_MOUNT" /opt/retro-mac
+}
+
+ensure_basilisk_media() {
+  if [[ "$RETRO_MAC_EMULATOR" != "basilisk2" ]]; then
+    return 0
+  fi
+
+  create_hfs_image "$RETRO_MAC_BOOT_IMAGE" "512M" "Macintosh HD"
+
+  if [[ -n "${RETRO_MAC_EXTRA_DISK:-}" ]]; then
+    if [[ ! -f "$RETRO_MAC_EXTRA_DISK" ]]; then
+      create_hfs_image "$RETRO_MAC_EXTRA_DISK" "256M" "Mac Exchange"
+      populate_mac_exchange "$RETRO_MAC_EXTRA_DISK"
+    fi
+  fi
+
+  chown -R "$RETRO_MAC_USER:$RETRO_MAC_USER" "$RETRO_MAC_IMAGES_DIR" "$RETRO_MAC_DATA_MOUNT"
+}
+
+configure_vnc_password() {
+  if [[ -n "${RETRO_MAC_VNC_PASSWORD:-}" ]]; then
+    x11vnc -storepasswd "$RETRO_MAC_VNC_PASSWORD" /etc/retro-mac/x11vnc.pass >/dev/null
+    chmod 600 /etc/retro-mac/x11vnc.pass
+  fi
+}
+
+main() {
+  ensure_user
+  prepare_data_disk
+  ensure_mount
+  ensure_layout
+  ensure_basilisk_media
+  configure_vnc_password
+  systemctl disable serial-getty@ttyS0.service getty@tty1.service >/dev/null 2>&1 || true
+  systemctl mask serial-getty@ttyS0.service getty@tty1.service >/dev/null 2>&1 || true
+}
+
+main "$@"

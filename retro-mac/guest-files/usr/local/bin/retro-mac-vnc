@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source /usr/local/bin/retro-mac-common
+
+if ! remote_access_enabled; then
+  echo "retro-mac-vnc disabled for session mode: $RETRO_MAC_SESSION_MODE" >&2
+  exit 0
+fi
+
+wait_for_x "$RETRO_MAC_DISPLAY"
+
+args=(
+  -display "$RETRO_MAC_DISPLAY"
+  -rfbport "$RETRO_MAC_VNC_PORT"
+  -listen "$RETRO_MAC_VNC_BIND"
+  -forever
+  -shared
+  -noshm
+  -xkb
+  -noxdamage
+  -quiet
+)
+
+if [[ -f /etc/retro-mac/x11vnc.pass ]]; then
+  args+=(-rfbauth /etc/retro-mac/x11vnc.pass)
+else
+  args+=(-nopw)
+fi
+
+exec x11vnc "${args[@]}"

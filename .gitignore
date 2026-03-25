@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Local build outputs
+tmp-build/
+tmp-unattend/
+
+# Unrelated generated images in this workspace
+*.ppm
+204-screen*.png
+240-build*.png
+332*.png
+348.png
+
+# Large local ISOs and downloads
+*.iso
+*.qcow2
+

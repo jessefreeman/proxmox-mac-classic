@@ -1,0 +1,12 @@
+[Unit]
+Description=Prepare retro-Mac data volume and runtime directories
+After=cloud-init.service local-fs.target
+Wants=cloud-init.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/retro-mac-firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

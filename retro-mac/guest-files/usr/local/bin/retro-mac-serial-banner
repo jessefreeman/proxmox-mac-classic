@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source /usr/local/bin/retro-mac-common
+
+ip_addr="$(
+  hostname -I 2>/dev/null | awk '{print $1}'
+)"
+
+session_state="$(systemctl is-active retro-mac-session 2>/dev/null || true)"
+if remote_access_enabled; then
+  vnc_state="$(systemctl is-active retro-mac-vnc 2>/dev/null || true)"
+  novnc_state="$(systemctl is-active retro-mac-novnc 2>/dev/null || true)"
+else
+  vnc_state="disabled"
+  novnc_state="disabled"
+fi
+
+cat <<EOF
+
+Retro Mac Appliance
+===================
+Profile: ${RETRO_MAC_EMULATOR}
+Session: ${session_state}
+VNC: ${vnc_state}
+noVNC: ${novnc_state}
+IP: ${ip_addr:-unknown}
+Open: http://${ip_addr:-<vm-ip>}:${RETRO_MAC_NOVNC_PORT}/vnc.html
+
+This VM is intended to boot directly into the emulator appliance.
+EOF
+
+if remote_access_enabled; then
+  cat <<EOF
+The Proxmox serial console is text-only, so the emulator display is available through noVNC rather than this tty.
+
+EOF
+fi

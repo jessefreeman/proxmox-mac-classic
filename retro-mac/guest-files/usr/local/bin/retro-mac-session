@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source /usr/local/bin/retro-mac-common
+
+export HOME="$RETRO_MAC_HOME"
+export DISPLAY="$RETRO_MAC_DISPLAY"
+export XDG_RUNTIME_DIR="${RETRO_MAC_RUNTIME_DIR}/xdg-runtime"
+export XAUTHORITY="${RETRO_MAC_RUNTIME_DIR}/.Xauthority"
+X_SOCKET="/tmp/.X11-unix/X${RETRO_MAC_DISPLAY#:}"
+X_PID_FILE="${RETRO_MAC_RUNTIME_DIR}/X.pid"
+OPENBOX_PID_FILE="${RETRO_MAC_RUNTIME_DIR}/openbox.pid"
+X_LOG="${RETRO_MAC_RUNTIME_DIR}/xorg.log"
+
+install -d -m 700 -o "$RETRO_MAC_USER" -g "$RETRO_MAC_USER" "$HOME" "$XDG_RUNTIME_DIR"
+install -d -m 755 "${RETRO_MAC_RUNTIME_DIR}"
+touch "$XAUTHORITY"
+chown "$RETRO_MAC_USER:$RETRO_MAC_USER" "$XAUTHORITY"
+
+rm -f "${RETRO_MAC_RUNTIME_DIR}/Xvfb.pid" "$OPENBOX_PID_FILE" "$X_PID_FILE"
+rm -f "/tmp/.X${RETRO_MAC_DISPLAY#:}-lock" "$X_SOCKET"
+
+stop_pid_file() {
+  local pid_file="$1"
+  if [[ -f "$pid_file" ]]; then
+    kill "$(cat "$pid_file")" >/dev/null 2>&1 || true
+    rm -f "$pid_file"
+  fi
+}
+
+cleanup() {
+  pkill -TERM -P $$ || true
+  stop_pid_file "$OPENBOX_PID_FILE"
+  stop_pid_file "$X_PID_FILE"
+  rm -f "${RETRO_MAC_RUNTIME_DIR}/Xvfb.pid" "/tmp/.X${RETRO_MAC_DISPLAY#:}-lock" "$X_SOCKET"
+}
+trap cleanup EXIT INT TERM
+
+if [[ "$RETRO_MAC_SESSION_MODE" == "direct-sdl" ]]; then
+  chvt 1 >/dev/null 2>&1 || true
+  exec /usr/local/bin/retro-mac-launch
+elif [[ "$RETRO_MAC_X_MODE" == "xorg" ]]; then
+  pkill -x Xorg >/dev/null 2>&1 || true
+  install -d -m 1777 /tmp/.X11-unix
+  chvt 1 >/dev/null 2>&1 || true
+  Xorg "${RETRO_MAC_DISPLAY}" -ac -nolisten tcp vt1 -keeptty -retro >"$X_LOG" 2>&1 &
+  echo $! > "$X_PID_FILE"
+  wait_for_x "$RETRO_MAC_DISPLAY"
+else
+  su -s /bin/bash - "$RETRO_MAC_USER" -c "Xvfb '${RETRO_MAC_DISPLAY}' -screen 0 '${RETRO_MAC_RES_WIDTH}x${RETRO_MAC_RES_HEIGHT}x24' -ac -nolisten tcp" &
+  echo $! > "${RETRO_MAC_RUNTIME_DIR}/Xvfb.pid"
+  wait_for_x "$RETRO_MAC_DISPLAY"
+fi
+
+su -s /bin/bash - "$RETRO_MAC_USER" -c "HOME='${HOME}' DISPLAY='${RETRO_MAC_DISPLAY}' XDG_RUNTIME_DIR='${XDG_RUNTIME_DIR}' XAUTHORITY='${XAUTHORITY}' openbox >/dev/null 2>&1" &
+echo $! > "$OPENBOX_PID_FILE"
+sleep 2
+
+exec su -s /bin/bash - "$RETRO_MAC_USER" -c "HOME='${HOME}' DISPLAY='${RETRO_MAC_DISPLAY}' XDG_RUNTIME_DIR='${XDG_RUNTIME_DIR}' XAUTHORITY='${XAUTHORITY}' /usr/local/bin/retro-mac-launch"

@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_FILE="/etc/retro-mac/retro-mac.env"
+
+if [[ -f "$CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1091
+  source "$CONFIG_FILE"
+fi
+
+: "${RETRO_MAC_USER:=retro}"
+: "${RETRO_MAC_DISPLAY:=:0}"
+: "${RETRO_MAC_X_MODE:=xorg}"
+: "${RETRO_MAC_SESSION_MODE:=x11}"
+: "${RETRO_MAC_REMOTE_ACCESS:=auto}"
+: "${RETRO_MAC_SCREEN:=1280x800}"
+: "${RETRO_MAC_VNC_PORT:=5900}"
+: "${RETRO_MAC_NOVNC_PORT:=6080}"
+: "${RETRO_MAC_NOVNC_BIND:=0.0.0.0}"
+: "${RETRO_MAC_VNC_BIND:=127.0.0.1}"
+: "${RETRO_MAC_RUNTIME_DIR:=/var/lib/retro-mac/runtime}"
+: "${RETRO_MAC_DATA_MOUNT:=/mnt/retro-mac-data}"
+: "${RETRO_MAC_DATA_LABEL:=RETRODATA}"
+: "${RETRO_MAC_ROMS_DIR:=/var/lib/retro-mac/roms}"
+: "${RETRO_MAC_IMAGES_DIR:=/var/lib/retro-mac/images}"
+: "${RETRO_MAC_SHARED_DIR=/mnt/retro-mac-data/shared}"
+: "${RETRO_MAC_EXPORTS_DIR:=/mnt/retro-mac-data/exports}"
+: "${RETRO_MAC_EMULATOR:=basilisk2}"
+: "${RETRO_MAC_EMULATOR_BINARY:=/opt/retro-mac/basilisk2/AppRun}"
+: "${RETRO_MAC_MODELID:=5}"
+: "${RETRO_MAC_CPU:=3}"
+: "${RETRO_MAC_FPU:=true}"
+: "${RETRO_MAC_DIRECT_SDL_VIDEODRIVER:=kmsdrm}"
+: "${RETRO_MAC_DIRECT_SDL_AUDIODRIVER:=dummy}"
+: "${RETRO_MAC_DIRECT_SDL_DEVICE_INDEX:=0}"
+: "${RETRO_MAC_DIRECT_SDL_RENDER_DRIVER:=software}"
+: "${RETRO_MAC_BOOT_IMAGE:=/var/lib/retro-mac/images/basilisk-target.img}"
+: "${RETRO_MAC_INSTALLER_DISK:=}"
+: "${RETRO_MAC_ATTACH_DISKS:=}"
+: "${RETRO_MAC_CDROM_IMAGE:=}"
+: "${RETRO_MAC_EXTRA_DISK:=}"
+: "${RETRO_MAC_AUTOSCAN_MEDIA:=true}"
+: "${RETRO_MAC_MEDIA_MOUNT_ROOT:=/run/retro-mac-media}"
+: "${RETRO_MAC_MEDIA_SCAN_DEPTH:=3}"
+: "${RETRO_MAC_MEDIA_IGNORE_LABELS:=CIDATA}"
+: "${RETRO_MAC_ROM_PATH:=/var/lib/retro-mac/roms/basilisk.rom}"
+: "${RETRO_MAC_PREFS_FILE:=/var/lib/retro-mac/runtime/.basilisk_ii_prefs}"
+: "${RETRO_MAC_MEMORY_BYTES:=67108864}"
+
+RETRO_MAC_RES_WIDTH="${RETRO_MAC_SCREEN%x*}"
+RETRO_MAC_RES_HEIGHT="${RETRO_MAC_SCREEN#*x}"
+RETRO_MAC_HOME="${RETRO_MAC_RUNTIME_DIR}/home"
+
+retromac_log() {
+  printf '[retro-mac] %s\n' "$*" >&2
+}
+
+get_parent_disk() {
+  local source="${1:-}"
+  local parent=""
+
+  [[ -n "$source" ]] || return 1
+  parent="$(lsblk -ndo PKNAME "$source" 2>/dev/null || true)"
+  if [[ -n "$parent" ]]; then
+    printf '/dev/%s\n' "$parent"
+    return 0
+  fi
+
+  if [[ "$source" == /dev/* ]]; then
+    printf '%s\n' "$source" | sed -E 's/p?[0-9]+$//'
+    return 0
+  fi
+
+  return 1
+}
+
+get_root_disk() {
+  local root_source=""
+  root_source="$(findmnt -n -o SOURCE / 2>/dev/null || true)"
+  get_parent_disk "$root_source"
+}
+
+get_data_disk() {
+  local data_source=""
+  data_source="$(findmnt -n -o SOURCE "$RETRO_MAC_DATA_MOUNT" 2>/dev/null | head -n 1 || true)"
+  get_parent_disk "$data_source"
+}
+
+is_mountable_media_fs() {
+  case "${1:-}" in
+    ext2|ext3|ext4|vfat|exfat|xfs|btrfs|ntfs|iso9660|udf)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+collect_media_from_mount() {
+  local mount_root="$1"
+  local disks_ref_name="$2"
+  local cdroms_ref_name="$3"
+  local -n disks_ref="$disks_ref_name"
+  local -n cdroms_ref="$cdroms_ref_name"
+  local found_path=""
+
+  while IFS= read -r found_path; do
+    case "${found_path##*/}" in
+      *.img|*.IMG|*.dsk|*.DSK|*.hfv|*.HFV|*.hda|*.HDA|*.toast|*.TOAST)
+        disks_ref+=("$found_path")
+        ;;
+      *.iso|*.ISO)
+        cdroms_ref+=("$found_path")
+        ;;
+    esac
+  done < <(find "$mount_root" -maxdepth "$RETRO_MAC_MEDIA_SCAN_DEPTH" -type f \
+    \( -iname '*.img' -o -iname '*.dsk' -o -iname '*.hfv' -o -iname '*.hda' -o -iname '*.toast' -o -iname '*.iso' \) \
+    | sort)
+}
+
+scan_partition_or_device() {
+  local candidate="$1"
+  local fstype="$2"
+  local mount_point="$3"
+  local candidate_type=""
+  local label=""
+  local ignore_labels=""
+  local -n _disks_ref="$4"
+  local -n _cdroms_ref="$5"
+
+  candidate_type="$(lsblk -dn -o TYPE "$candidate" 2>/dev/null || true)"
+  label="$(blkid -o value -s LABEL "$candidate" 2>/dev/null || true)"
+  ignore_labels=":${RETRO_MAC_MEDIA_IGNORE_LABELS,,}:"
+  if [[ -n "$label" ]] && [[ "$ignore_labels" == *":${label,,}:"* ]]; then
+    return 0
+  fi
+
+  if [[ "$candidate_type" == "rom" ]]; then
+    _cdroms_ref+=("$candidate")
+    return 0
+  fi
+
+  if [[ "$fstype" == "hfs" || "$fstype" == "hfsplus" ]]; then
+    _disks_ref+=("$candidate")
+    return 0
+  fi
+
+  if [[ "$fstype" == "iso9660" || "$fstype" == "udf" ]]; then
+    _cdroms_ref+=("$candidate")
+    return 0
+  fi
+
+  if is_mountable_media_fs "$fstype"; then
+    install -d -m 755 "$mount_point"
+    if mountpoint -q "$mount_point"; then
+      collect_media_from_mount "$mount_point" _disks_ref _cdroms_ref
+    elif mount -o ro "$candidate" "$mount_point" >/dev/null 2>&1; then
+      collect_media_from_mount "$mount_point" _disks_ref _cdroms_ref
+    fi
+    return 0
+  fi
+
+  if [[ -z "$fstype" ]]; then
+    _disks_ref+=("$candidate")
+  fi
+}
+
+scan_proxmox_media() {
+  local root_disk=""
+  local data_disk=""
+  local disk_path=""
+  local disk_type=""
+  local candidate=""
+  local child_fstype=""
+  local mount_point=""
+  local -a scanned_disks=()
+  local -a scanned_cdroms=()
+
+  root_disk="$(get_root_disk || true)"
+  data_disk="$(get_data_disk || true)"
+
+  install -d -m 755 "$RETRO_MAC_MEDIA_MOUNT_ROOT"
+
+  while read -r disk_path disk_type; do
+    [[ -n "$disk_path" ]] || continue
+    [[ "$disk_path" != "$root_disk" ]] || continue
+    [[ "$disk_path" != "$data_disk" ]] || continue
+
+    while read -r candidate child_fstype; do
+      [[ -n "$candidate" ]] || continue
+      mount_point="${RETRO_MAC_MEDIA_MOUNT_ROOT}/$(basename "$candidate")"
+      scan_partition_or_device "$candidate" "$child_fstype" "$mount_point" scanned_disks scanned_cdroms
+    done < <(
+      if lsblk -nrpo PATH,TYPE "$disk_path" | awk '$2=="part"{found=1} END{exit !found}'; then
+        lsblk -nrpo PATH,FSTYPE,TYPE "$disk_path" | awk '$3=="part"{print $1" "$2}'
+      else
+        lsblk -dnpo PATH,FSTYPE "$disk_path"
+      fi
+    )
+  done < <(lsblk -dpno PATH,TYPE | awk '$2=="disk" || $2=="rom"{print $1" "$2}')
+
+  printf 'RETRO_MAC_SCANNED_ATTACH_DISKS=%q\n' "$(IFS=:; printf '%s' "${scanned_disks[*]}")" > "${RETRO_MAC_RUNTIME_DIR}/scanned-media.env"
+  printf 'RETRO_MAC_SCANNED_CDROM_IMAGE=%q\n' "${scanned_cdroms[0]:-}" >> "${RETRO_MAC_RUNTIME_DIR}/scanned-media.env"
+}
+
+remote_access_enabled() {
+  case "$RETRO_MAC_REMOTE_ACCESS" in
+    none|false|off|0)
+      return 1
+      ;;
+    novnc|vnc|true|on|1)
+      return 0
+      ;;
+    auto)
+      [[ "$RETRO_MAC_SESSION_MODE" != "direct-sdl" ]]
+      return
+      ;;
+    *)
+      [[ "$RETRO_MAC_SESSION_MODE" != "direct-sdl" ]]
+      return
+      ;;
+  esac
+}
+
+wait_for_x() {
+  local display="${1:-$RETRO_MAC_DISPLAY}"
+  for _ in $(seq 1 40); do
+    if command -v xdpyinfo >/dev/null 2>&1 && DISPLAY="$display" xdpyinfo >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ -S "/tmp/.X11-unix/X${display#:}" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}

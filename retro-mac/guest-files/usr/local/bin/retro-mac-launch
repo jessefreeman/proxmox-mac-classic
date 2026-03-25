@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source /usr/local/bin/retro-mac-common
+
+show_missing_message() {
+  local message="$1"
+  cat <<EOF > "${RETRO_MAC_RUNTIME_DIR}/missing-media.txt"
+Retro-Mac appliance is up, but the emulator cannot start yet.
+
+$message
+
+Expected ROM path: $RETRO_MAC_ROM_PATH
+Expected boot image: $RETRO_MAC_BOOT_IMAGE
+
+Copy your legally owned ROM and disk image into:
+  $RETRO_MAC_ROMS_DIR
+  $RETRO_MAC_IMAGES_DIR
+
+Then restart:
+  sudo systemctl restart retro-mac-session
+EOF
+  exec xterm -fa Monospace -fs 12 -hold -e "cat '${RETRO_MAC_RUNTIME_DIR}/missing-media.txt'"
+}
+
+retromac_media_exists() {
+  local path="${1:-}"
+  [[ -f "$path" || -b "$path" ]]
+}
+
+refresh_scanned_media() {
+  local configured_cdrom=""
+  local boot_real=""
+  local extra_real=""
+  local scan_real=""
+  local filtered_scan=""
+  local scan_entry=""
+
+  if [[ "${RETRO_MAC_AUTOSCAN_MEDIA:-true}" != "true" ]]; then
+    RETRO_MAC_EFFECTIVE_ATTACH_DISKS="${RETRO_MAC_ATTACH_DISKS:-}"
+    RETRO_MAC_EFFECTIVE_CDROM_IMAGE="${RETRO_MAC_CDROM_IMAGE:-}"
+    return 0
+  fi
+
+  scan_proxmox_media
+
+  if [[ -f "${RETRO_MAC_RUNTIME_DIR}/scanned-media.env" ]]; then
+    # shellcheck disable=SC1090
+    source "${RETRO_MAC_RUNTIME_DIR}/scanned-media.env"
+  fi
+
+  RETRO_MAC_EFFECTIVE_ATTACH_DISKS="${RETRO_MAC_ATTACH_DISKS:-}"
+  if [[ -n "${RETRO_MAC_SCANNED_ATTACH_DISKS:-}" ]]; then
+    boot_real="$(readlink -f "$RETRO_MAC_BOOT_IMAGE" 2>/dev/null || printf '%s' "$RETRO_MAC_BOOT_IMAGE")"
+    extra_real="$(readlink -f "${RETRO_MAC_EXTRA_DISK:-}" 2>/dev/null || printf '%s' "${RETRO_MAC_EXTRA_DISK:-}")"
+    OLDIFS="$IFS"
+    IFS=':'
+    for scan_entry in $RETRO_MAC_SCANNED_ATTACH_DISKS; do
+      [[ -n "$scan_entry" ]] || continue
+      scan_real="$(readlink -f "$scan_entry" 2>/dev/null || printf '%s' "$scan_entry")"
+      if [[ "$scan_real" == "$boot_real" || ( -n "$extra_real" && "$scan_real" == "$extra_real" ) ]]; then
+        continue
+      fi
+      if [[ -n "$filtered_scan" ]]; then
+        filtered_scan="${filtered_scan}:$scan_entry"
+      else
+        filtered_scan="$scan_entry"
+      fi
+    done
+    IFS="$OLDIFS"
+
+    if [[ -n "$filtered_scan" ]]; then
+      if [[ -n "$RETRO_MAC_EFFECTIVE_ATTACH_DISKS" ]]; then
+        RETRO_MAC_EFFECTIVE_ATTACH_DISKS="${RETRO_MAC_EFFECTIVE_ATTACH_DISKS}:${filtered_scan}"
+      else
+        RETRO_MAC_EFFECTIVE_ATTACH_DISKS="${filtered_scan}"
+      fi
+    fi
+  fi
+
+  configured_cdrom="${RETRO_MAC_CDROM_IMAGE:-}"
+  if [[ -n "$configured_cdrom" ]]; then
+    RETRO_MAC_EFFECTIVE_CDROM_IMAGE="$configured_cdrom"
+  else
+    RETRO_MAC_EFFECTIVE_CDROM_IMAGE="${RETRO_MAC_SCANNED_CDROM_IMAGE:-}"
+  fi
+}
+
+launch_with_window_management() {
+  local window_title="$1"
+  shift
+
+  DISPLAY="$RETRO_MAC_DISPLAY" xrandr -s "${RETRO_MAC_RES_WIDTH}x${RETRO_MAC_RES_HEIGHT}" >/dev/null 2>&1 || true
+
+  "$@" &
+  local emulator_pid=$!
+
+  if command -v wmctrl >/dev/null 2>&1; then
+    for _ in $(seq 1 20); do
+      if DISPLAY="$RETRO_MAC_DISPLAY" wmctrl -l | grep -Fq "$window_title"; then
+        DISPLAY="$RETRO_MAC_DISPLAY" wmctrl -r "$window_title" -b add,fullscreen,maximized_vert,maximized_horz >/dev/null 2>&1 || true
+        DISPLAY="$RETRO_MAC_DISPLAY" wmctrl -r "$window_title" -e 0,0,0,-1,-1 >/dev/null 2>&1 || true
+        DISPLAY="$RETRO_MAC_DISPLAY" wmctrl -a "$window_title" >/dev/null 2>&1 || true
+        break
+      fi
+      sleep 1
+    done
+  fi
+
+  wait "$emulator_pid"
+}
+
+write_basilisk_prefs() {
+  local screen_mode="win"
+  local disk_path=""
+  if [[ "$RETRO_MAC_SESSION_MODE" == "direct-sdl" || "${RETRO_MAC_FULLSCREEN:-false}" == "true" ]]; then
+    screen_mode="fbdev"
+  fi
+
+  cat >"$RETRO_MAC_PREFS_FILE" <<EOF
+rom $RETRO_MAC_ROM_PATH
+screen ${screen_mode}/${RETRO_MAC_RES_WIDTH}/${RETRO_MAC_RES_HEIGHT}
+ramsize $RETRO_MAC_MEMORY_BYTES
+frameskip 0
+modelid $RETRO_MAC_MODELID
+cpu $RETRO_MAC_CPU
+fpu $RETRO_MAC_FPU
+nogui true
+init_grab false
+EOF
+
+  if [[ -n "${RETRO_MAC_EFFECTIVE_CDROM_IMAGE:-}" ]]; then
+    printf 'cdrom %s\n' "$RETRO_MAC_EFFECTIVE_CDROM_IMAGE" >>"$RETRO_MAC_PREFS_FILE"
+  else
+    printf 'nocdrom true\n' >>"$RETRO_MAC_PREFS_FILE"
+  fi
+
+  if [[ -n "${RETRO_MAC_SHARED_DIR:-}" && -d "${RETRO_MAC_SHARED_DIR:-}" ]]; then
+    printf 'extfs %s\n' "$RETRO_MAC_SHARED_DIR" >>"$RETRO_MAC_PREFS_FILE"
+  else
+    printf 'extfs /__retro_mac_extfs_disabled__\n' >>"$RETRO_MAC_PREFS_FILE"
+  fi
+
+  if [[ -n "${RETRO_MAC_INSTALLER_DISK:-}" ]]; then
+    printf 'disk %s\n' "$RETRO_MAC_INSTALLER_DISK" >>"$RETRO_MAC_PREFS_FILE"
+  fi
+
+  if [[ -n "${RETRO_MAC_EFFECTIVE_ATTACH_DISKS:-}" ]]; then
+    OLDIFS="$IFS"
+    IFS=':'
+    for disk_path in $RETRO_MAC_EFFECTIVE_ATTACH_DISKS; do
+      [[ -n "$disk_path" ]] || continue
+      printf 'disk %s\n' "$disk_path" >>"$RETRO_MAC_PREFS_FILE"
+    done
+    IFS="$OLDIFS"
+  fi
+
+  printf 'disk %s\n' "$RETRO_MAC_BOOT_IMAGE" >>"$RETRO_MAC_PREFS_FILE"
+
+  if [[ -n "${RETRO_MAC_EXTRA_DISK:-}" ]]; then
+    printf 'disk %s\n' "$RETRO_MAC_EXTRA_DISK" >>"$RETRO_MAC_PREFS_FILE"
+  fi
+
+  if [[ "$RETRO_MAC_SESSION_MODE" == "direct-sdl" && -n "${RETRO_MAC_DIRECT_SDL_RENDER_DRIVER:-}" ]]; then
+    printf 'sdlrender %s\n' "$RETRO_MAC_DIRECT_SDL_RENDER_DRIVER" >>"$RETRO_MAC_PREFS_FILE"
+  fi
+}
+
+write_sheepshaver_prefs() {
+  cat >"$RETRO_MAC_PREFS_FILE" <<EOF
+rom $RETRO_MAC_ROM_PATH
+disk $RETRO_MAC_BOOT_IMAGE
+extfs $RETRO_MAC_SHARED_DIR
+screen win/${RETRO_MAC_RES_WIDTH}/${RETRO_MAC_RES_HEIGHT}
+windowmodes ${RETRO_MAC_RES_WIDTH}x${RETRO_MAC_RES_HEIGHT}x24
+ramsize $RETRO_MAC_MEMORY_BYTES
+frameskip 0
+gfxaccel false
+bootdrive 0
+bootdriver 0
+ignoresegv true
+nocdrom true
+nogui true
+EOF
+}
+
+main() {
+  install -d -m 755 "$RETRO_MAC_RUNTIME_DIR" "$RETRO_MAC_HOME"
+  export HOME="$RETRO_MAC_HOME"
+
+  if [[ "$RETRO_MAC_SESSION_MODE" != "direct-sdl" ]]; then
+    export DISPLAY="$RETRO_MAC_DISPLAY"
+  fi
+
+  if [[ ! -x "$RETRO_MAC_EMULATOR_BINARY" ]]; then
+    show_missing_message "The emulator binary is missing: $RETRO_MAC_EMULATOR_BINARY"
+  fi
+
+  case "$RETRO_MAC_EMULATOR" in
+    minivmac)
+      if [[ ! -f "$RETRO_MAC_ROM_PATH" || ! -f "$RETRO_MAC_BOOT_IMAGE" ]]; then
+        show_missing_message "Mini vMac needs both the Macintosh Plus ROM and a bootable disk image."
+      fi
+      ln -sfn "$RETRO_MAC_ROM_PATH" "$(dirname "$RETRO_MAC_EMULATOR_BINARY")/vMac.ROM"
+      export SDL_AUDIODRIVER=dummy
+      exec "$RETRO_MAC_EMULATOR_BINARY" "$RETRO_MAC_BOOT_IMAGE"
+      ;;
+    basilisk2)
+      if [[ ! -f "$RETRO_MAC_ROM_PATH" ]] || ! retromac_media_exists "$RETRO_MAC_BOOT_IMAGE"; then
+        show_missing_message "Basilisk II needs a 68k ROM and a bootable Mac disk image."
+      fi
+      refresh_scanned_media
+      write_basilisk_prefs
+      if [[ "$RETRO_MAC_EMULATOR_BINARY" == /opt/retro-mac/basilisk2/appdir/* ]]; then
+        export APPDIR="/opt/retro-mac/basilisk2/appdir"
+        export PATH="${APPDIR}/usr/local/bin:${APPDIR}/usr/bin:${PATH}"
+        export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${APPDIR}/lib:${APPDIR}/usr/lib/x86_64-linux-gnu:${APPDIR}/usr/lib/i386-linux-gnu:${LD_LIBRARY_PATH:-}"
+        export PYTHONPATH="${APPDIR}/usr/share/pyshared:${PYTHONPATH:-}"
+        export XDG_DATA_DIRS="${APPDIR}/usr/share:${XDG_DATA_DIRS:-}"
+        export PERLLIB="${APPDIR}/usr/share/perl5:${APPDIR}/usr/lib/perl5:${PERLLIB:-}"
+        export GSETTINGS_SCHEMA_DIR="${APPDIR}/usr/share/glib-2.0/schemas:${GSETTINGS_SCHEMA_DIR:-}"
+        export GTK_DATA_PREFIX="${APPDIR}"
+        export GTK_EXE_PREFIX="${APPDIR}"
+        export GTK2_RC_FILES="${APPDIR}/usr/share/themes/Clearlooks/gtk-2.0/gtkrc"
+        export GDK_PIXBUF_MODULEDIR="${APPDIR}/usr/lib/gdk-pixbuf-2.0/loaders"
+        export GDK_PIXBUF_MODULE_FILE="${APPDIR}/usr/lib/gdk-pixbuf-2.0/loaders.cache"
+        export GTK_PATH="${APPDIR}/usr/lib/gtk-2.0"
+        export GTK_IM_MODULE_FILE="${APPDIR}/usr/lib/gtk-2.0:${GTK_PATH}"
+        export GIO_MODULE_DIR="${APPDIR}/usr/lib/gio/modules"
+      fi
+      if [[ "$RETRO_MAC_SESSION_MODE" == "direct-sdl" ]]; then
+        export SDL_VIDEODRIVER="$RETRO_MAC_DIRECT_SDL_VIDEODRIVER"
+        export SDL_AUDIODRIVER="$RETRO_MAC_DIRECT_SDL_AUDIODRIVER"
+        export SDL_KMSDRM_DEVICE_INDEX="$RETRO_MAC_DIRECT_SDL_DEVICE_INDEX"
+        exec "$RETRO_MAC_EMULATOR_BINARY" --config "$RETRO_MAC_PREFS_FILE"
+      else
+        export SDL_VIDEODRIVER=x11
+        launch_with_window_management "Basilisk II" \
+          "$RETRO_MAC_EMULATOR_BINARY" --config "$RETRO_MAC_PREFS_FILE" --display "$RETRO_MAC_DISPLAY" --sdlrender software
+        exit $?
+      fi
+      ;;
+    sheepshaver)
+      if [[ ! -f "$RETRO_MAC_ROM_PATH" || ! -f "$RETRO_MAC_BOOT_IMAGE" ]]; then
+        show_missing_message "SheepShaver needs a Power Mac ROM and a supported Mac OS disk image."
+      fi
+      write_sheepshaver_prefs
+      export APPDIR="/opt/retro-mac/sheepshaver/appdir"
+      export PATH="${APPDIR}/usr/local/bin:${APPDIR}/usr/bin:${PATH}"
+      export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${APPDIR}/lib:${APPDIR}/usr/lib/x86_64-linux-gnu:${APPDIR}/usr/lib/i386-linux-gnu:${LD_LIBRARY_PATH:-}"
+      export XDG_DATA_DIRS="${APPDIR}/usr/share:${XDG_DATA_DIRS:-}"
+      exec "$RETRO_MAC_EMULATOR_BINARY" --config "$RETRO_MAC_PREFS_FILE" --display "$RETRO_MAC_DISPLAY" --sdlrender software
+      ;;
+    *)
+      show_missing_message "Unknown emulator profile: $RETRO_MAC_EMULATOR"
+      ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,14 @@
+[Unit]
+Description=Publish the retro-Mac display via x11vnc
+After=retro-mac-session.service
+Requires=retro-mac-session.service
+
+[Service]
+Type=simple
+ExecCondition=/usr/local/bin/retro-mac-remote-enabled
+ExecStart=/usr/local/bin/retro-mac-vnc
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

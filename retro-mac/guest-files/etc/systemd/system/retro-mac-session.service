@@ -1,0 +1,20 @@
+[Unit]
+Description=Retro-Mac emulator display session
+After=network-online.target retro-mac-firstboot.service
+Requires=retro-mac-firstboot.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/retro-mac-session
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

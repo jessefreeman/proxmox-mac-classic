@@ -1,0 +1,14 @@
+[Unit]
+Description=Expose retro-Mac VNC display via noVNC
+After=retro-mac-vnc.service
+Requires=retro-mac-vnc.service
+
+[Service]
+Type=simple
+ExecCondition=/usr/local/bin/retro-mac-remote-enabled
+ExecStart=/usr/local/bin/retro-mac-novnc
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

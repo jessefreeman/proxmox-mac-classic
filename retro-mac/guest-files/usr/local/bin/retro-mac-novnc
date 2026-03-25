@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source /usr/local/bin/retro-mac-common
+
+if ! remote_access_enabled; then
+  echo "retro-mac-novnc disabled for session mode: $RETRO_MAC_SESSION_MODE" >&2
+  exit 0
+fi
+
+exec websockify \
+  --web=/usr/share/novnc/ \
+  --heartbeat=30 \
+  "${RETRO_MAC_NOVNC_BIND}:${RETRO_MAC_NOVNC_PORT}" \
+  "${RETRO_MAC_VNC_BIND}:${RETRO_MAC_VNC_PORT}"

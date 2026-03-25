@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source /usr/local/bin/retro-mac-common
+
+systemctl is-active retro-mac-session >/dev/null
+
+if remote_access_enabled; then
+  systemctl is-active retro-mac-vnc >/dev/null
+  systemctl is-active retro-mac-novnc >/dev/null
+  ss -ltn "( sport = :${RETRO_MAC_NOVNC_PORT} or sport = :${RETRO_MAC_VNC_PORT} )" | grep -q LISTEN
+fi
+
+echo "retro-mac-ok"
