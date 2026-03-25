@@ -21,6 +21,13 @@ Copy your legally owned ROM and disk image into:
 Then restart:
   sudo systemctl restart retro-mac-session
 EOF
+  if [[ "${RETRO_MAC_SESSION_MODE:-}" == "direct-sdl" ]]; then
+    clear || true
+    cat "${RETRO_MAC_RUNTIME_DIR}/missing-media.txt"
+    while sleep 3600; do
+      :
+    done
+  fi
   exec xterm -fa Monospace -fs 12 -hold -e "cat '${RETRO_MAC_RUNTIME_DIR}/missing-media.txt'"
 }
 

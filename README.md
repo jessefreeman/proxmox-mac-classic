@@ -1,40 +1,48 @@
 # Proxmox Mac Classic
 
-Thin Debian-based Proxmox templates that boot straight into classic Macintosh emulation, with a dedicated Mac hard disk, a transfer disk, and removable media slots driven by additional Proxmox virtual disks.
+Turnkey Proxmox appliance for classic Macintosh emulation with `Basilisk II`.
 
-This repo currently documents and ships the working `Basilisk II` template flow that became Proxmox template `260` on the reference host.
+`v0.1` supports one profile only:
+
+- `Basilisk II`
+- Old World `Mac IIci` ROM
+- System 7.5.3 helper-media workflow
+- Proxmox layout:
+  - `scsi0` Linux appliance
+  - `scsi1` persistent data disk
+  - `scsi2` removable media slot
+  - `scsi3` dedicated `Macintosh HD`
+
+The goal is simple: import a ready-made Proxmox appliance, provide your own ROM and Mac disks, and boot straight into a classic Mac in the Proxmox graphical console.
 
 ![Working Proxmox Mac Classic Template](assets/working-template.png)
 
 ## Quickstart
 
-This quickstart assumes:
+### 1. Build or download the release artifact
 
-- Proxmox VE host is reachable over SSH
-- you already have SSH key access to the host
-- you have legal access to your own Old World Mac ROMs and classic Mac OS disk images
-- you want the same basic layout used in the working reference template
-
-### 1. Build the guest asset bundle
-
-From this repo:
+To build from source:
 
 ```bash
 ./scripts/build-retro-mac-templates.sh
+./scripts/build-release-artifact.sh
 ```
 
-The script builds a thin Debian appliance and imports it into Proxmox.
+That produces:
 
-### 2. Create the reference template layout
+- `releases/proxmox-mac-classic-v0.1.0-appliance.tar.gz`
 
-The working `Basilisk II` template layout is:
+### 2. Import the appliance into Proxmox
 
-- `scsi0`: Linux appliance OS disk
-- `scsi1`: persistent data disk (`RETRODATA`)
-- `scsi2`: removable media slot
-- `scsi3`: dedicated Mac hard disk (`Macintosh HD`)
+Copy the release archive to a Proxmox host, extract it, then run:
 
-Reference template:
+```bash
+tar -xzf proxmox-mac-classic-v0.1.0-appliance.tar.gz -C /root/proxmox-mac-classic-v0.1.0
+cd /root/proxmox-mac-classic-v0.1.0
+./import-release-to-proxmox.sh .
+```
+
+By default that imports:
 
 - VMID `260`
 - name `retro-mac-basilisk-template`
@@ -44,84 +52,96 @@ Reference template:
 Example:
 
 ```bash
-ssh root@192.168.0.12 'qm clone 260 362 --name retro-mac-basilisk-install-test --full 1 && qm start 362'
+qm clone 260 362 --name retro-mac-basilisk-install-test --full 1
+qm start 362
 ```
 
-Each clone gets its own unique copy of:
+Every clone gets its own unique:
 
-- `scsi0`
-- `scsi1`
-- `scsi2`
-- `scsi3`
+- `Macintosh HD`
+- media-slot disk
+- data disk
 
-That means each clone has its own independent `Macintosh HD`.
+### 4. Add your ROM
 
-### 4. Put Mac media on the removable media slot
+Provide your own legal `Mac IIci` ROM in the clone at:
 
-The appliance scans extra Proxmox media disks and attaches classic Mac images automatically.
+```text
+/mnt/retro-mac-data/roms/ii-ci.rom
+```
 
-For the current template shape:
+### 5. Put helper or installer media on the removable media slot
 
-- `scsi2` is the removable media slot
-- format it with a normal Linux filesystem such as `ext4`
-- copy Mac media files onto it
+The media slot is `scsi2`.
 
-Supported file types:
+Inside the Linux guest, the appliance mounts that slot under:
 
-- `.img`
-- `.dsk`
-- `.hfv`
-- `.hda`
-- `.toast`
-- `.iso`
+```text
+/run/retro-mac-media/<device>
+```
 
-The working reference media disk currently uses:
+Use the helper script to populate it:
 
-- `001-System7_5_3.img`
+```bash
+sudo ./scripts/prepare-media-slot.sh /run/retro-mac-media/sdc /path/to/System7_5_3.img
+sudo systemctl restart retro-mac-session
+```
 
-### 5. Boot in the Proxmox graphical console
+### 6. Boot in the Proxmox graphical console
 
-The appliance is optimized for the Proxmox console rather than browser noVNC.
-
-Open the clone in the normal Proxmox graphical console, not the serial console.
+Use the normal Proxmox graphical console, not the serial console.
 
 What you should see:
 
-- removable startup/helper media from `scsi2`
+- helper media from `scsi2`
 - `Macintosh HD` from `scsi3`
 - `Mac Exchange`
 
-### 6. Install into `Macintosh HD`
+### 7. Install onto `Macintosh HD`
 
-Use the helper media to install or copy a system onto `Macintosh HD`.
+Install or copy the system to `Macintosh HD`, then:
 
-Once the clone boots cleanly from `Macintosh HD`, you can:
+- remove helper media from `scsi2`
+- reboot
+- confirm the clone now boots from `Macintosh HD`
 
-- remove the helper media from `scsi2`
-- snapshot the VM
-- promote that clone into a richer gold master template
+### 8. Turn a configured clone into a gold master
 
-## What This Repo Includes
+Once the clone is stable:
 
-- Proxmox build automation under [`scripts/build-retro-mac-templates.sh`](scripts/build-retro-mac-templates.sh)
-- guest runtime files under [`retro-mac/guest-files`](retro-mac/guest-files)
-- architecture and design docs under [`docs/`](docs)
+- snapshot it
+- clean it up
+- optionally convert it into a richer template
 
-## What You Must Supply
+## What You Supply
 
-This repo does not ship:
+This project does not include:
 
 - Apple ROMs
-- Apple system software
-- copyrighted installer disks
+- Apple installer media
+- copyrighted system software
 
-You must provide your own legally owned ROMs and Mac OS media.
+You must provide your own legal:
+
+- `Mac IIci` ROM
+- `System7_5_3.img` or other supported helper/install media
+
+## Repo Contents
+
+- [`scripts/build-retro-mac-templates.sh`](scripts/build-retro-mac-templates.sh)
+- [`scripts/build-release-artifact.sh`](scripts/build-release-artifact.sh)
+- [`scripts/import-release-to-proxmox.sh`](scripts/import-release-to-proxmox.sh)
+- [`scripts/prepare-media-slot.sh`](scripts/prepare-media-slot.sh)
+- [`scripts/validate-retro-mac-layout.sh`](scripts/validate-retro-mac-layout.sh)
+- [`retro-mac/guest-files`](retro-mac/guest-files)
 
 ## Docs
 
+- [Prerequisites](docs/prerequisites.md)
 - [Architecture](docs/architecture.md)
+- [ROMs And Media](docs/roms-and-media.md)
 - [Media Model](docs/media-model.md)
 - [Implementation Decisions](docs/decisions.md)
-- [Replication Guide](docs/replication.md)
 - [Operations Guide](docs/operations.md)
-
+- [Release Artifacts](docs/release-artifacts.md)
+- [Replication Guide](docs/replication.md)

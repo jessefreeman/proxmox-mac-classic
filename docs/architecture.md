@@ -1,103 +1,72 @@
 # Architecture
 
-## Goal
+## Product Shape
 
-The project builds a thin Linux appliance that behaves like a single-purpose retro Mac workstation inside Proxmox:
-
-- no Linux login prompt in the normal user path
-- direct boot into the emulator
-- display visible in the Proxmox graphical console
-- persistent Mac hard disk per clone
-- removable Mac media controlled by Proxmox disk attachments
-
-## Stack
-
-### Host
-
-- Proxmox VE
-- VM lifecycle managed by `qm`
-- storage split between SSD-backed OS/media and larger persistent data storage
-
-### Guest
-
-- Debian cloud image base
-- cloud-init for initial access
-- `qemu-guest-agent`
-- systemd-managed appliance runtime
-
-### Emulator
+`v0.1` is a single-profile appliance:
 
 - `Basilisk II`
-- direct SDL console path
-- guest-generated prefs file
-- Old World ROM supplied by the operator
+- direct SDL console mode
+- Proxmox graphical console as the primary display path
 
-## VM Layout
+## Disk Layout
 
 ### `scsi0`
 
-Linux appliance OS disk.
+Debian appliance OS.
 
-This is the normal Debian guest root disk and Proxmox boot disk.
+This is the normal Proxmox boot disk and the only Linux boot device.
 
 ### `scsi1`
 
 Persistent data disk labeled `RETRODATA`.
 
-This is mounted at:
+Mounted at:
 
 - `/mnt/retro-mac-data`
 
-It stores:
+Stores:
 
 - ROMs
-- installer images
+- long-lived image library
 - shared/export content
-- long-lived appliance data
+- `Mac Exchange` backing image
 
 ### `scsi2`
 
 Removable media slot.
 
-This is a normal Proxmox virtual disk formatted with a Linux filesystem such as `ext4`. The guest scans it for classic Mac disk images and auto-attaches them to Basilisk.
+Formatted with a Linux filesystem such as `ext4` and scanned for classic Mac disk files.
 
 ### `scsi3`
 
-Dedicated Mac hard disk.
+Dedicated HFS `Macintosh HD`.
 
-This is a Proxmox-backed disk formatted as HFS and presented directly to Basilisk as `Macintosh HD`.
+Attached directly to Basilisk as the internal Mac hard disk.
 
-## Guest Boot Flow
+## Guest Runtime
 
-1. Proxmox boots the Debian guest from `scsi0`.
-2. `retro-mac-firstboot.service` ensures the layout exists.
-3. `retro-mac-session.service` takes over `tty1`.
-4. `retro-mac-launch` generates a Basilisk prefs file.
-5. `BasiliskII-kms` starts directly on the console.
+The guest runtime is driven by:
 
-## Media Flow
+- `retro-mac-firstboot.service`
+- `retro-mac-session.service`
+- `retro-mac-launch`
 
-The guest auto-detects media by scanning non-root, non-data attached disks:
+Boot flow:
 
-- ignores the root disk
-- ignores the `RETRODATA` disk
-- ignores cloud-init `CIDATA`
+1. Debian boots from `scsi0`
+2. first boot prepares disk layout and labels
+3. `retro-mac-session` takes over `tty1`
+4. `retro-mac-launch` generates Basilisk prefs
+5. `BasiliskII-nojit` starts in direct SDL mode
 
-For candidate media disks:
+## Why The Console Path Wins
 
-- HFS block devices can be attached directly
-- Linux-readable filesystems can be mounted and scanned for `.img`, `.dsk`, `.hfv`, `.hda`, `.toast`, and `.iso`
+The current design is optimized for:
 
-The discovered files are added to the generated Basilisk prefs.
+- no Linux login prompt in the normal path
+- no desktop environment
+- emulator visible in the Proxmox console
+- low moving-part count
 
-## Why This Layout
-
-This split gives the best operational behavior:
-
-- `scsi0` keeps Linux appliance concerns separate
-- `scsi1` holds long-lived retro-Mac content
-- `scsi2` behaves like removable media
-- `scsi3` behaves like a real internal Mac hard disk
-
-Most importantly, a Proxmox clone creates a unique `Macintosh HD` per VM, which is exactly what we want for safe template reuse.
+This is why `v0.1` does not default to `noVNC`.
 

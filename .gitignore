@@ -4,6 +4,7 @@
 # Local build outputs
 tmp-build/
 tmp-unattend/
+releases/
 
 # Unrelated generated images in this workspace
 *.ppm
@@ -15,4 +16,3 @@ tmp-unattend/
 # Large local ISOs and downloads
 *.iso
 *.qcow2
-

@@ -1,98 +1,55 @@
 # Operations Guide
 
-## Daily Concepts
+## Template Lifecycle
 
-There are three VM roles worth keeping separate:
+Recommended roles:
 
-- installer-ready template
-- working proof VM
-- gold master VM
+- installer-ready base template
+- proof clone
+- configured gold-master clone
 
-## Recommended Template Workflow
+## Safe Changes
 
-### Installer-ready template
+Use snapshots before:
 
-Use the base template for:
-
-- known-good hardware layout
-- direct console boot
-- clean `Macintosh HD`
-- removable media slot
-
-This should stay as untouched as possible.
-
-### Proof VM
-
-Use proof VMs to test:
-
-- helper media changes
-- ROM compatibility
-- install flow
-- desktop behavior
-
-### Gold master VM
-
-After a good install:
-
-- snapshot it
-- clean it up
-- convert it into a richer template
-
-## Safe Experimentation
-
-Use Proxmox snapshots before:
-
-- swapping media strategy
+- changing helper media
+- changing ROM path or ROM contents
 - changing disk sizing
-- replacing helper boot media
-- changing guest runtime scripts
+- changing guest runtime files
 
-## Common Tasks
+## Common Commands
 
-### Restart the appliance session
+Restart the appliance:
 
 ```bash
 sudo systemctl restart retro-mac-session
 ```
 
-### Check generated Basilisk prefs
+Check generated prefs:
 
 ```bash
 sed -n '1,120p' /var/lib/retro-mac/runtime/.basilisk_ii_prefs
 ```
 
-### Check detected removable media
+Check scanned removable media:
 
 ```bash
 cat /var/lib/retro-mac/runtime/scanned-media.env
 ```
 
-### Check attached guest disks
+Validate guest layout:
 
 ```bash
-lsblk -dpno PATH,SIZE,TYPE,FSTYPE,LABEL
+sudo /usr/local/bin/retro-mac-healthcheck
+sudo /path/to/scripts/validate-retro-mac-layout.sh
 ```
 
-## Troubleshooting
+## Known Good Defaults
 
-### `?` floppy icon
-
-The startup media was attached but not actually bootable for the current machine profile.
-
-### “Minimal software” startup error
-
-The startup image is model-specific or incomplete.
-
-### `Macintosh HD` cannot be used
-
-The target disk size or formatting is wrong for the guest OS and emulator combination. The working fix was using a `1 GB` HFS `Macintosh HD`.
-
-### Media is not appearing
-
-Check:
-
-- the extra Proxmox disk is attached
-- the disk is mounted under `/run/retro-mac-media`
-- the images have supported extensions
-- `retro-mac-session` has been restarted
+- `64 MB` Mac RAM
+- `3072 MB` Linux RAM
+- `2` Linux vCPU
+- `virtio` VGA
+- `tablet=1`
+- direct SDL console mode
 

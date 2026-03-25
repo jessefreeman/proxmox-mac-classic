@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source /Users/workspace/Documents/office-proxmox/scripts/build-retro-mac-templates.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/build-retro-mac-templates.sh"
 
 verify_clone() {
-  local template_vmid="$1"
-  local test_vmid="$2"
-  local name="$3"
+  local vmid="${1:-$TEST_VMID}"
+  local ip=""
 
-  create_and_test_clone "$template_vmid" "$test_vmid" "$name" \
-    "systemctl is-active retro-mac-session retro-mac-vnc retro-mac-novnc ssh qemu-guest-agent && /usr/local/bin/retro-mac-healthcheck"
+  ip="$(wait_for_ip "$vmid")"
+  wait_for_ssh "$ip" "$COMMON_CIUSER"
+
+  ssh -i "$PROXMOX_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$COMMON_CIUSER@$ip" '
+    sudo /usr/local/bin/retro-mac-healthcheck
+    sudo systemctl is-active retro-mac-session qemu-guest-agent ssh >/dev/null
+    sudo blkid /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3 | grep -q "TYPE=\"hfs\""
+    sudo findmnt /mnt/retro-mac-data >/dev/null
+    sudo test -f /var/lib/retro-mac/runtime/.basilisk_ii_prefs
+  '
+
+  printf 'validated vm %s at %s\n' "$vmid" "$ip"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  verify_clone "$MINIVMAC_VMID" "$TEST_MINIVMAC_VMID" "retro-mac-minivmac-proof"
-  verify_clone "$BASILISKII_VMID" "$TEST_BASILISKII_VMID" "retro-mac-basilisk-proof"
-  verify_clone "$SHEEPSHAVER_VMID" "$TEST_SHEEPSHAVER_VMID" "retro-mac-sheepshaver-proof"
-  log 'Retro-Mac validation clones are provisioned and verified.'
+  verify_clone "${1:-$TEST_VMID}"
 fi
