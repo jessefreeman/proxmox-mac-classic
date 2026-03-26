@@ -43,6 +43,7 @@ Current default:
 
 - clean exit triggers host `poweroff`
 - failed exit restarts the emulator session
+- the host waits briefly after `sync` before the power action to reduce HFS dirty-shutdown warnings
 
 Limitation:
 

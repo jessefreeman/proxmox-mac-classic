@@ -40,6 +40,7 @@ handle_emulator_exit() {
   local exit_code="$1"
   local clean_action="${RETRO_MAC_CLEAN_EXIT_ACTION:-poweroff}"
   local failed_action="${RETRO_MAC_FAILED_EXIT_ACTION:-restart-session}"
+  local clean_delay="${RETRO_MAC_CLEAN_EXIT_DELAY_SECONDS:-3}"
   local action=""
 
   if [[ "$exit_code" -eq 0 ]]; then
@@ -51,12 +52,18 @@ handle_emulator_exit() {
   case "$action" in
     poweroff)
       if [[ "$exit_code" -eq 0 ]] && [[ "$EUID" -eq 0 ]]; then
+        retromac_log "Flushing host writes before power action"
+        sync || true
+        sleep "$clean_delay"
         retromac_log "Emulator exited cleanly; powering off host VM"
         systemctl --no-block poweroff
       fi
       ;;
     reboot)
       if [[ "$exit_code" -eq 0 ]] && [[ "$EUID" -eq 0 ]]; then
+        retromac_log "Flushing host writes before power action"
+        sync || true
+        sleep "$clean_delay"
         retromac_log "Emulator exited cleanly; rebooting host VM"
         systemctl --no-block reboot
       fi
