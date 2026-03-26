@@ -3,14 +3,14 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-PROXMOX_HOST="${PROXMOX_HOST:-192.168.0.12}"
+PROXMOX_HOST="${PROXMOX_HOST:-proxmox.example.invalid}"
 PROXMOX_USER="${PROXMOX_USER:-root}"
-PROXMOX_SSH_KEY="${PROXMOX_SSH_KEY:-$HOME/.ssh/office-p8-proxmox}"
-LOCAL_PUBLIC_KEY="${LOCAL_PUBLIC_KEY:-$HOME/.ssh/office-p8-proxmox.pub}"
+PROXMOX_SSH_KEY="${PROXMOX_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+LOCAL_PUBLIC_KEY="${LOCAL_PUBLIC_KEY:-$HOME/.ssh/id_ed25519.pub}"
 
-NODE="${NODE:-office-p8}"
-OS_STORAGE="${OS_STORAGE:-fastssd}"
-DATA_STORAGE="${DATA_STORAGE:-coldstorage}"
+NODE="${NODE:-proxmox-node}"
+OS_STORAGE="${OS_STORAGE:-local-zfs}"
+DATA_STORAGE="${DATA_STORAGE:-local-zfs}"
 CLOUDINIT_STORAGE="${CLOUDINIT_STORAGE:-local-lvm}"
 BRIDGE="${BRIDGE:-vmbr0}"
 
@@ -20,15 +20,15 @@ DEBIAN_IMAGE_URL="${DEBIAN_IMAGE_URL:-https://cloud.debian.org/images/cloud/${DE
 REMOTE_WORKDIR="${REMOTE_WORKDIR:-/root/proxmox-mac-classic}"
 REMOTE_BASE_IMAGE="${REMOTE_WORKDIR}/debian-${DEBIAN_VERSION}-${DEBIAN_RELEASE}.qcow2"
 REMOTE_ASSET_TARBALL="${REMOTE_WORKDIR}/retro-mac-guest-files.tgz"
-REMOTE_PUBKEY_FILE="${REMOTE_WORKDIR}/office-p8-template.pub"
+REMOTE_PUBKEY_FILE="${REMOTE_WORKDIR}/template.pub"
 
-TEMPLATE_VMID="${TEMPLATE_VMID:-260}"
-TEST_VMID="${TEST_VMID:-360}"
+TEMPLATE_VMID="${TEMPLATE_VMID:-9000}"
+TEST_VMID="${TEST_VMID:-9001}"
 TEMPLATE_NAME="${TEMPLATE_NAME:-retro-mac-basilisk-template}"
 TEST_NAME="${TEST_NAME:-retro-mac-basilisk-proof}"
 
 COMMON_CIUSER="${COMMON_CIUSER:-retroadmin}"
-COMMON_CIPASSWORD="${COMMON_CIPASSWORD:-RetroMac!2026}"
+COMMON_CIPASSWORD="${COMMON_CIPASSWORD:-ChangeMe123!}"
 RETRO_USER="${RETRO_USER:-retro}"
 
 OS_DISK_SIZE="${OS_DISK_SIZE:-12G}"

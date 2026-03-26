@@ -14,7 +14,7 @@ The public install flow assumes you start from a normal Debian VM and then run t
 - storage backends equivalent to:
   - fast SSD-backed storage for `scsi0`, `scsi2`, `scsi3`
   - bulk or mirrored storage for `scsi1`
-- a Linux bridge such as `vmbr0`
+- a Linux bridge configured for your VM network
 
 Recommended VM hardware for the base VM:
 

@@ -22,7 +22,7 @@ Run:
 
 This produces:
 
-- Proxmox template `260`
+- a Proxmox template at the VMID you selected
 - validation clone if smoke tests are enabled
 
 ## Optional Release Artifact Export
@@ -36,8 +36,8 @@ If you want a portable release bundle after building the template:
 ## Clone The Template
 
 ```bash
-qm clone 260 362 --name retro-mac-basilisk-install-test --full 1
-qm start 362
+qm clone <template-vmid> <clone-vmid> --name retro-mac-basilisk-install-test --full 1
+qm start <clone-vmid>
 ```
 
 ## Supply ROM And Helper Media

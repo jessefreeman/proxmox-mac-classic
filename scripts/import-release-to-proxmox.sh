@@ -7,17 +7,17 @@ Usage: import-release-to-proxmox.sh <release-dir>
 
 Run this on a Proxmox host after extracting a turnkey release archive.
 Environment overrides:
-  VMID=260
+  VMID=9000
   NAME=retro-mac-basilisk-template
-  NODE=office-p8
-  OS_STORAGE=fastssd
-  DATA_STORAGE=coldstorage
+  NODE=<your-proxmox-node>
+  OS_STORAGE=<template-storage>
+  DATA_STORAGE=<data-storage>
   CLOUDINIT_STORAGE=local-lvm
-  BRIDGE=vmbr0
+  BRIDGE=<bridge-name>
   MEMORY_MB=3072
   CORES=2
   CIUSER=retroadmin
-  CIPASSWORD=RetroMac!2026
+  CIPASSWORD=ChangeMe123!
   SSH_PUBLIC_KEY_FILE=/root/.ssh/id_ed25519.pub
   CONVERT_TO_TEMPLATE=1
 EOF
@@ -28,17 +28,17 @@ EOF
 release_dir="$1"
 [[ -d "$release_dir" ]] || { echo "Missing release directory: $release_dir" >&2; exit 1; }
 
-VMID="${VMID:-260}"
+VMID="${VMID:-9000}"
 NAME="${NAME:-retro-mac-basilisk-template}"
 NODE="${NODE:-$(hostname)}"
-OS_STORAGE="${OS_STORAGE:-fastssd}"
-DATA_STORAGE="${DATA_STORAGE:-coldstorage}"
+OS_STORAGE="${OS_STORAGE:-local-zfs}"
+DATA_STORAGE="${DATA_STORAGE:-local-zfs}"
 CLOUDINIT_STORAGE="${CLOUDINIT_STORAGE:-local-lvm}"
 BRIDGE="${BRIDGE:-vmbr0}"
 MEMORY_MB="${MEMORY_MB:-3072}"
 CORES="${CORES:-2}"
 CIUSER="${CIUSER:-retroadmin}"
-CIPASSWORD="${CIPASSWORD:-RetroMac!2026}"
+CIPASSWORD="${CIPASSWORD:-ChangeMe123!}"
 SSH_PUBLIC_KEY_FILE="${SSH_PUBLIC_KEY_FILE:-/root/.ssh/id_ed25519.pub}"
 CONVERT_TO_TEMPLATE="${CONVERT_TO_TEMPLATE:-1}"
 

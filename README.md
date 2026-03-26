@@ -55,10 +55,10 @@ curl -fsSL https://raw.githubusercontent.com/jessefreeman/proxmox-mac-classic/ma
 Example:
 
 ```bash
-qm shutdown 260
-qm template 260
-qm clone 260 362 --name retro-mac-basilisk-install-test --full 1
-qm start 362
+qm shutdown <template-vmid>
+qm template <template-vmid>
+qm clone <template-vmid> <clone-vmid> --name retro-mac-basilisk-install-test --full 1
+qm start <clone-vmid>
 ```
 
 Every clone gets its own unique:
