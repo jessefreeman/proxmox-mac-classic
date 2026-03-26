@@ -46,6 +46,8 @@ fi
 : "${RETRO_MAC_ROM_PATH:=/var/lib/retro-mac/roms/basilisk.rom}"
 : "${RETRO_MAC_PREFS_FILE:=/var/lib/retro-mac/runtime/.basilisk_ii_prefs}"
 : "${RETRO_MAC_MEMORY_BYTES:=67108864}"
+: "${RETRO_MAC_CLEAN_EXIT_ACTION:=poweroff}"
+: "${RETRO_MAC_FAILED_EXIT_ACTION:=restart-session}"
 
 RETRO_MAC_RES_WIDTH="${RETRO_MAC_SCREEN%x*}"
 RETRO_MAC_RES_HEIGHT="${RETRO_MAC_SCREEN#*x}"

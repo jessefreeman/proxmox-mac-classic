@@ -36,6 +36,41 @@ retromac_media_exists() {
   [[ -f "$path" || -b "$path" ]]
 }
 
+handle_emulator_exit() {
+  local exit_code="$1"
+  local clean_action="${RETRO_MAC_CLEAN_EXIT_ACTION:-poweroff}"
+  local failed_action="${RETRO_MAC_FAILED_EXIT_ACTION:-restart-session}"
+  local action=""
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    action="$clean_action"
+  else
+    action="$failed_action"
+  fi
+
+  case "$action" in
+    poweroff)
+      if [[ "$exit_code" -eq 0 ]] && [[ "$EUID" -eq 0 ]]; then
+        retromac_log "Emulator exited cleanly; powering off host VM"
+        systemctl --no-block poweroff
+      fi
+      ;;
+    reboot)
+      if [[ "$exit_code" -eq 0 ]] && [[ "$EUID" -eq 0 ]]; then
+        retromac_log "Emulator exited cleanly; rebooting host VM"
+        systemctl --no-block reboot
+      fi
+      ;;
+    restart-session|"")
+      ;;
+    *)
+      retromac_log "Unknown exit action '$action'; leaving host state unchanged"
+      ;;
+  esac
+
+  return "$exit_code"
+}
+
 refresh_scanned_media() {
   local configured_cdrom=""
   local boot_real=""
@@ -240,7 +275,9 @@ main() {
         export SDL_VIDEODRIVER="$RETRO_MAC_DIRECT_SDL_VIDEODRIVER"
         export SDL_AUDIODRIVER="$RETRO_MAC_DIRECT_SDL_AUDIODRIVER"
         export SDL_KMSDRM_DEVICE_INDEX="$RETRO_MAC_DIRECT_SDL_DEVICE_INDEX"
-        exec "$RETRO_MAC_EMULATOR_BINARY" --config "$RETRO_MAC_PREFS_FILE"
+        "$RETRO_MAC_EMULATOR_BINARY" --config "$RETRO_MAC_PREFS_FILE"
+        handle_emulator_exit "$?"
+        exit $?
       else
         export SDL_VIDEODRIVER=x11
         launch_with_window_management "Basilisk II" \

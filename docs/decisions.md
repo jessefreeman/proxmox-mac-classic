@@ -29,6 +29,25 @@ That choice was made because:
 - the X/noVNC path added complexity and degraded the appliance feel
 - the direct console path behaves more like a dedicated VM appliance
 
+## Clean Emulator Exit Drives Host Power State
+
+In the direct SDL appliance path, a clean emulator exit is treated as an intentional host power action rather than a crash.
+
+Why:
+
+- `Special -> Shut Down` in the guest should not simply respawn the emulator
+- the systemd session should only restart on failure
+- the host VM should be allowed to power off cleanly when the classic Mac session exits normally
+
+Current default:
+
+- clean exit triggers host `poweroff`
+- failed exit restarts the emulator session
+
+Limitation:
+
+- Basilisk does not provide a clean host-facing distinction between guest shutdown and guest restart in this appliance flow, so the clean-exit host action is configurable rather than inferred separately for each menu action
+
 ## Dedicated `Macintosh HD`
 
 This project deliberately moved `Macintosh HD` onto a Proxmox-backed disk.
