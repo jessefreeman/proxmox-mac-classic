@@ -21,6 +21,7 @@ fi
 : "${RETRO_MAC_RUNTIME_DIR:=/var/lib/retro-mac/runtime}"
 : "${RETRO_MAC_DATA_MOUNT:=/mnt/retro-mac-data}"
 : "${RETRO_MAC_DATA_LABEL:=RETRODATA}"
+: "${RETRO_MAC_DATA_DISK_ENABLED:=true}"
 : "${RETRO_MAC_ROMS_DIR:=/var/lib/retro-mac/roms}"
 : "${RETRO_MAC_IMAGES_DIR:=/var/lib/retro-mac/images}"
 : "${RETRO_MAC_SHARED_DIR=/mnt/retro-mac-data/shared}"
@@ -34,12 +35,14 @@ fi
 : "${RETRO_MAC_DIRECT_SDL_AUDIODRIVER:=dummy}"
 : "${RETRO_MAC_DIRECT_SDL_DEVICE_INDEX:=0}"
 : "${RETRO_MAC_DIRECT_SDL_RENDER_DRIVER:=software}"
+: "${RETRO_MAC_SYSTEM_DISK:=}"
 : "${RETRO_MAC_BOOT_IMAGE:=/var/lib/retro-mac/images/basilisk-target.img}"
 : "${RETRO_MAC_INSTALLER_DISK:=}"
 : "${RETRO_MAC_ATTACH_DISKS:=}"
 : "${RETRO_MAC_CDROM_IMAGE:=}"
 : "${RETRO_MAC_EXTRA_DISK:=}"
 : "${RETRO_MAC_AUTOSCAN_MEDIA:=true}"
+: "${RETRO_MAC_MEDIA_LIBRARY_DIRS:=}"
 : "${RETRO_MAC_MEDIA_MOUNT_ROOT:=/run/retro-mac-media}"
 : "${RETRO_MAC_MEDIA_SCAN_DEPTH:=3}"
 : "${RETRO_MAC_MEDIA_IGNORE_LABELS:=CIDATA}"
@@ -56,6 +59,93 @@ RETRO_MAC_HOME="${RETRO_MAC_RUNTIME_DIR}/home"
 
 retromac_log() {
   printf '[retro-mac] %s\n' "$*" >&2
+}
+
+retromac_realpath() {
+  local path="${1:-}"
+  [[ -n "$path" ]] || return 1
+  readlink -f "$path" 2>/dev/null || printf '%s\n' "$path"
+}
+
+retromac_by_id_path_for_device() {
+  local path="${1:-}"
+  local real=""
+  local link=""
+
+  [[ -n "$path" ]] || return 1
+  real="$(retromac_realpath "$path" 2>/dev/null || true)"
+  [[ -n "$real" ]] || return 1
+  [[ -d /dev/disk/by-id ]] || return 1
+
+  while IFS= read -r link; do
+    if [[ "$(readlink -f "$link" 2>/dev/null || true)" == "$real" ]]; then
+      printf '%s\n' "$link"
+      return 0
+    fi
+  done < <(find /dev/disk/by-id -maxdepth 1 -type l | sort)
+
+  return 1
+}
+
+retromac_slot_index_for_path() {
+  local path="${1:-}"
+  local probe=""
+  local basename=""
+
+  [[ -n "$path" ]] || return 1
+
+  for probe in "$path" "$(retromac_by_id_path_for_device "$path" 2>/dev/null || true)"; do
+    [[ -n "$probe" ]] || continue
+    basename="$(basename "$probe")"
+    if [[ "$basename" =~ (scsi|sata|ide)([0-9]+) ]]; then
+      printf '%s\n' "${BASH_REMATCH[2]}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+retromac_get_system_disk() {
+  local boot_image="${RETRO_MAC_BOOT_IMAGE:-}"
+  local default_boot_image="${RETRO_MAC_IMAGES_DIR%/}/basilisk-target.img"
+
+  if [[ -n "${RETRO_MAC_SYSTEM_DISK:-}" ]]; then
+    printf '%s\n' "$RETRO_MAC_SYSTEM_DISK"
+    return 0
+  fi
+
+  if [[ -b "$boot_image" ]]; then
+    printf '%s\n' "$boot_image"
+    return 0
+  fi
+
+  if [[ -n "$boot_image" && "$boot_image" == "$default_boot_image" ]]; then
+    printf '%s\n' "$boot_image"
+    return 0
+  fi
+
+  return 1
+}
+
+retromac_get_boot_override() {
+  local boot_image="${RETRO_MAC_BOOT_IMAGE:-}"
+  local system_disk=""
+  local boot_real=""
+  local system_real=""
+
+  [[ -n "$boot_image" ]] || return 1
+
+  system_disk="$(retromac_get_system_disk 2>/dev/null || true)"
+  if [[ -n "$system_disk" ]]; then
+    boot_real="$(retromac_realpath "$boot_image" 2>/dev/null || true)"
+    system_real="$(retromac_realpath "$system_disk" 2>/dev/null || true)"
+    if [[ -n "$boot_real" && -n "$system_real" && "$boot_real" == "$system_real" ]]; then
+      return 1
+    fi
+  fi
+
+  printf '%s\n' "$boot_image"
 }
 
 get_parent_disk() {
@@ -129,6 +219,7 @@ scan_partition_or_device() {
   local candidate_type=""
   local label=""
   local ignore_labels=""
+  local stable_candidate=""
   local -n _disks_ref="$4"
   local -n _cdroms_ref="$5"
 
@@ -140,17 +231,20 @@ scan_partition_or_device() {
   fi
 
   if [[ "$candidate_type" == "rom" ]]; then
-    _cdroms_ref+=("$candidate")
+    stable_candidate="$(retromac_by_id_path_for_device "$candidate" 2>/dev/null || printf '%s' "$candidate")"
+    _cdroms_ref+=("$stable_candidate")
     return 0
   fi
 
   if [[ "$fstype" == "hfs" || "$fstype" == "hfsplus" ]]; then
-    _disks_ref+=("$candidate")
+    stable_candidate="$(retromac_by_id_path_for_device "$candidate" 2>/dev/null || printf '%s' "$candidate")"
+    _disks_ref+=("$stable_candidate")
     return 0
   fi
 
   if [[ "$fstype" == "iso9660" || "$fstype" == "udf" ]]; then
-    _cdroms_ref+=("$candidate")
+    stable_candidate="$(retromac_by_id_path_for_device "$candidate" 2>/dev/null || printf '%s' "$candidate")"
+    _cdroms_ref+=("$stable_candidate")
     return 0
   fi
 
@@ -164,24 +258,34 @@ scan_partition_or_device() {
     return 0
   fi
 
-  if [[ -z "$fstype" ]]; then
-    _disks_ref+=("$candidate")
-  fi
+  return 0
 }
 
 scan_proxmox_media() {
   local root_disk=""
   local data_disk=""
+  local system_disk=""
+  local system_real=""
+  local system_slot=""
   local disk_path=""
   local disk_type=""
   local candidate=""
+  local candidate_real=""
+  local candidate_slot=""
+  local candidate_position="post"
   local child_fstype=""
   local mount_point=""
-  local -a scanned_disks=()
+  local -a scanned_pre_system_disks=()
+  local -a scanned_post_system_disks=()
   local -a scanned_cdroms=()
+  local -a candidate_disks=()
+  local -a candidate_cdroms=()
 
   root_disk="$(get_root_disk || true)"
   data_disk="$(get_data_disk || true)"
+  system_disk="$(retromac_get_system_disk 2>/dev/null || true)"
+  system_real="$(retromac_realpath "$system_disk" 2>/dev/null || true)"
+  system_slot="$(retromac_slot_index_for_path "$system_disk" 2>/dev/null || true)"
 
   install -d -m 755 "$RETRO_MAC_MEDIA_MOUNT_ROOT"
 
@@ -193,7 +297,33 @@ scan_proxmox_media() {
     while read -r candidate child_fstype; do
       [[ -n "$candidate" ]] || continue
       mount_point="${RETRO_MAC_MEDIA_MOUNT_ROOT}/$(basename "$candidate")"
-      scan_partition_or_device "$candidate" "$child_fstype" "$mount_point" scanned_disks scanned_cdroms
+      candidate_disks=()
+      candidate_cdroms=()
+      scan_partition_or_device "$candidate" "$child_fstype" "$mount_point" candidate_disks candidate_cdroms
+
+      if (( ${#candidate_disks[@]} == 0 && ${#candidate_cdroms[@]} == 0 )); then
+        continue
+      fi
+
+      candidate_real="$(retromac_realpath "$candidate" 2>/dev/null || true)"
+      if [[ -n "$system_real" && -n "$candidate_real" && "$candidate_real" == "$system_real" ]]; then
+        continue
+      fi
+
+      candidate_position="post"
+      candidate_slot="$(retromac_slot_index_for_path "$candidate" 2>/dev/null || true)"
+      if [[ -z "$system_slot" ]]; then
+        candidate_position="pre"
+      elif [[ -n "$candidate_slot" && "$candidate_slot" -lt "$system_slot" ]]; then
+        candidate_position="pre"
+      fi
+
+      if [[ "$candidate_position" == "pre" ]]; then
+        scanned_pre_system_disks+=("${candidate_disks[@]}")
+      else
+        scanned_post_system_disks+=("${candidate_disks[@]}")
+      fi
+      scanned_cdroms+=("${candidate_cdroms[@]}")
     done < <(
       if lsblk -nrpo PATH,TYPE "$disk_path" | awk '$2=="part"{found=1} END{exit !found}'; then
         lsblk -nrpo PATH,FSTYPE,TYPE "$disk_path" | awk '$3=="part"{print $1" "$2}'
@@ -203,7 +333,8 @@ scan_proxmox_media() {
     )
   done < <(lsblk -dpno PATH,TYPE | awk '$2=="disk" || $2=="rom"{print $1" "$2}')
 
-  printf 'RETRO_MAC_SCANNED_ATTACH_DISKS=%q\n' "$(IFS=:; printf '%s' "${scanned_disks[*]}")" > "${RETRO_MAC_RUNTIME_DIR}/scanned-media.env"
+  printf 'RETRO_MAC_SCANNED_PRE_SYSTEM_DISKS=%q\n' "$(IFS=:; printf '%s' "${scanned_pre_system_disks[*]}")" > "${RETRO_MAC_RUNTIME_DIR}/scanned-media.env"
+  printf 'RETRO_MAC_SCANNED_POST_SYSTEM_DISKS=%q\n' "$(IFS=:; printf '%s' "${scanned_post_system_disks[*]}")" >> "${RETRO_MAC_RUNTIME_DIR}/scanned-media.env"
   printf 'RETRO_MAC_SCANNED_CDROM_IMAGE=%q\n' "${scanned_cdroms[0]:-}" >> "${RETRO_MAC_RUNTIME_DIR}/scanned-media.env"
 }
 

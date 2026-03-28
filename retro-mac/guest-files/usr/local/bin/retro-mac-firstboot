@@ -100,6 +100,18 @@ ensure_user() {
 }
 
 prepare_data_disk() {
+  if [[ "${RETRO_MAC_DATA_DISK_ENABLED:-true}" != "true" ]]; then
+    return 0
+  fi
+
+  if findmnt -n "$RETRO_MAC_DATA_MOUNT" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if blkid -L "$RETRO_MAC_DATA_LABEL" >/dev/null 2>&1; then
+    return 0
+  fi
+
   local root_source root_disk candidate
   root_source="$(findmnt -n -o SOURCE / || true)"
   root_disk="$(lsblk -ndo PKNAME "$root_source" 2>/dev/null || true)"
@@ -108,18 +120,31 @@ prepare_data_disk() {
     root_disk="$(basename "$root_source" | sed 's/[0-9].*$//')"
   fi
 
-  candidate="$(
-    lsblk -rno NAME,TYPE,FSTYPE |
-      awk -v root="$root_disk" '$2 == "disk" && $1 != root && $3 == "" { print $1; exit }'
-  )"
+  if [[ -b /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1 ]]; then
+    candidate="scsi-0QEMU_QEMU_HARDDISK_drive-scsi1"
+  else
+    candidate="$(
+      lsblk -rno NAME,TYPE,FSTYPE |
+        awk -v root="$root_disk" '$2 == "disk" && $1 != root && $3 == "" { print $1; exit }'
+    )"
+  fi
 
   if [[ -n "$candidate" ]]; then
-    log "Formatting /dev/${candidate} as ${RETRO_MAC_DATA_LABEL}"
-    mkfs.ext4 -F -L "$RETRO_MAC_DATA_LABEL" "/dev/${candidate}"
+    if [[ "$candidate" == scsi-* ]]; then
+      log "Formatting /dev/disk/by-id/${candidate} as ${RETRO_MAC_DATA_LABEL}"
+      mkfs.ext4 -F -L "$RETRO_MAC_DATA_LABEL" "/dev/disk/by-id/${candidate}"
+    else
+      log "Formatting /dev/${candidate} as ${RETRO_MAC_DATA_LABEL}"
+      mkfs.ext4 -F -L "$RETRO_MAC_DATA_LABEL" "/dev/${candidate}"
+    fi
   fi
 }
 
 ensure_mount() {
+  if [[ "${RETRO_MAC_DATA_DISK_ENABLED:-true}" != "true" ]]; then
+    return 0
+  fi
+
   install -d -m 755 "$RETRO_MAC_DATA_MOUNT"
 
   if ! grep -q "LABEL=${RETRO_MAC_DATA_LABEL} ${RETRO_MAC_DATA_MOUNT} " /etc/fstab; then
@@ -131,35 +156,65 @@ ensure_mount() {
 
 ensure_layout() {
   install -d -m 755 "$RETRO_MAC_RUNTIME_DIR" "$RETRO_MAC_HOME" "$RETRO_MAC_EXPORTS_DIR"
+  if [[ "${RETRO_MAC_DATA_DISK_ENABLED:-true}" == "true" ]]; then
+    install -d -m 755 \
+      "${RETRO_MAC_DATA_MOUNT}/roms" \
+      "${RETRO_MAC_DATA_MOUNT}/images" \
+      "${RETRO_MAC_DATA_MOUNT}/shared" \
+      "${RETRO_MAC_DATA_MOUNT}/exports"
+
+    rm -rf "$RETRO_MAC_ROMS_DIR" "$RETRO_MAC_IMAGES_DIR" /var/lib/retro-mac/shared
+    ln -sfn "${RETRO_MAC_DATA_MOUNT}/roms" "$RETRO_MAC_ROMS_DIR"
+    ln -sfn "${RETRO_MAC_DATA_MOUNT}/images" "$RETRO_MAC_IMAGES_DIR"
+    ln -sfn "${RETRO_MAC_DATA_MOUNT}/shared" /var/lib/retro-mac/shared
+
+    chown -R "$RETRO_MAC_USER:$RETRO_MAC_USER" /var/lib/retro-mac "$RETRO_MAC_DATA_MOUNT" /opt/retro-mac
+    return 0
+  fi
+
   install -d -m 755 \
-    "${RETRO_MAC_DATA_MOUNT}/roms" \
-    "${RETRO_MAC_DATA_MOUNT}/images" \
-    "${RETRO_MAC_DATA_MOUNT}/shared" \
-    "${RETRO_MAC_DATA_MOUNT}/exports"
+    "$(dirname "$RETRO_MAC_ROMS_DIR")" \
+    "$(dirname "$RETRO_MAC_IMAGES_DIR")" \
+    "$RETRO_MAC_EXPORTS_DIR" \
+    /var/lib/retro-mac/shared
 
-  rm -rf "$RETRO_MAC_ROMS_DIR" "$RETRO_MAC_IMAGES_DIR" /var/lib/retro-mac/shared
-  ln -sfn "${RETRO_MAC_DATA_MOUNT}/roms" "$RETRO_MAC_ROMS_DIR"
-  ln -sfn "${RETRO_MAC_DATA_MOUNT}/images" "$RETRO_MAC_IMAGES_DIR"
-  ln -sfn "${RETRO_MAC_DATA_MOUNT}/shared" /var/lib/retro-mac/shared
-
-  chown -R "$RETRO_MAC_USER:$RETRO_MAC_USER" /var/lib/retro-mac "$RETRO_MAC_DATA_MOUNT" /opt/retro-mac
+  chown -R "$RETRO_MAC_USER:$RETRO_MAC_USER" /var/lib/retro-mac /opt/retro-mac
 }
 
 ensure_basilisk_media() {
+  local system_disk=""
+
   if [[ "$RETRO_MAC_EMULATOR" != "basilisk2" ]]; then
     return 0
   fi
 
-  create_hfs_image "$RETRO_MAC_BOOT_IMAGE" "512M" "Macintosh HD"
+  system_disk="$(retromac_get_system_disk 2>/dev/null || true)"
+  if [[ -n "$system_disk" ]]; then
+    create_hfs_image "$system_disk" "512M" "Macintosh HD"
+  fi
 
   if [[ -n "${RETRO_MAC_EXTRA_DISK:-}" ]]; then
-    if [[ ! -f "$RETRO_MAC_EXTRA_DISK" ]]; then
+    local extra_created=0
+
+    if [[ -b "$RETRO_MAC_EXTRA_DISK" ]]; then
+      if ! blkid "$RETRO_MAC_EXTRA_DISK" >/dev/null 2>&1; then
+        create_hfs_image "$RETRO_MAC_EXTRA_DISK" "256M" "Mac Exchange"
+        extra_created=1
+      fi
+    elif [[ ! -f "$RETRO_MAC_EXTRA_DISK" ]]; then
       create_hfs_image "$RETRO_MAC_EXTRA_DISK" "256M" "Mac Exchange"
+      extra_created=1
+    fi
+
+    if [[ "$extra_created" -eq 1 ]]; then
       populate_mac_exchange "$RETRO_MAC_EXTRA_DISK"
     fi
   fi
 
-  chown -R "$RETRO_MAC_USER:$RETRO_MAC_USER" "$RETRO_MAC_IMAGES_DIR" "$RETRO_MAC_DATA_MOUNT"
+  chown -R "$RETRO_MAC_USER:$RETRO_MAC_USER" "$RETRO_MAC_IMAGES_DIR" >/dev/null 2>&1 || true
+  if [[ "${RETRO_MAC_DATA_DISK_ENABLED:-true}" == "true" ]]; then
+    chown -R "$RETRO_MAC_USER:$RETRO_MAC_USER" "$RETRO_MAC_DATA_MOUNT"
+  fi
 }
 
 configure_vnc_password() {

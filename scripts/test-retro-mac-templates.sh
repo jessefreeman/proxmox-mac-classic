@@ -13,7 +13,7 @@ verify_clone() {
   ssh -i "$PROXMOX_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$COMMON_CIUSER@$ip" '
     sudo /usr/local/bin/retro-mac-healthcheck
     sudo systemctl is-active retro-mac-session qemu-guest-agent ssh >/dev/null
-    sudo blkid /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3 | grep -q "TYPE=\"hfs\""
+    sudo bash -lc ". /etc/retro-mac/retro-mac.env && blkid \"${RETRO_MAC_SYSTEM_DISK:-/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3}\" | grep -q \"TYPE=\\\"hfs\\\"\""
     sudo findmnt /mnt/retro-mac-data >/dev/null
     sudo test -f /var/lib/retro-mac/runtime/.basilisk_ii_prefs
   '

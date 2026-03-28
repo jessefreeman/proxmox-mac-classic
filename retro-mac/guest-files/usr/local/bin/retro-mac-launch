@@ -6,13 +6,20 @@ source /usr/local/bin/retro-mac-common
 
 show_missing_message() {
   local message="$1"
+  local expected_boot=""
+
+  expected_boot="$(retromac_get_boot_override 2>/dev/null || retromac_get_system_disk 2>/dev/null || true)"
+  if [[ -z "$expected_boot" ]]; then
+    expected_boot="attached Proxmox media or Macintosh HD"
+  fi
+
   cat <<EOF > "${RETRO_MAC_RUNTIME_DIR}/missing-media.txt"
 Retro-Mac appliance is up, but the emulator cannot start yet.
 
 $message
 
 Expected ROM path: $RETRO_MAC_ROM_PATH
-Expected boot image: $RETRO_MAC_BOOT_IMAGE
+Expected boot media: $expected_boot
 
 Copy your legally owned ROM and disk image into:
   $RETRO_MAC_ROMS_DIR
@@ -34,6 +41,52 @@ EOF
 retromac_media_exists() {
   local path="${1:-}"
   [[ -f "$path" || -b "$path" ]]
+}
+
+append_unique_media_path() {
+  local path="${1:-}"
+  local target_name="$2"
+  local existing=""
+  local -n target_ref="$target_name"
+
+  [[ -n "$path" ]] || return 0
+  for existing in "${target_ref[@]}"; do
+    if [[ "$existing" == "$path" ]]; then
+      return 0
+    fi
+  done
+
+  target_ref+=("$path")
+}
+
+append_colon_list_to_media_array() {
+  local list="${1:-}"
+  local target_name="$2"
+  local entry=""
+  local entry_real=""
+  local exclude_real=""
+  local skip_entry=0
+
+  [[ -n "$list" ]] || return 0
+
+  OLDIFS="$IFS"
+  IFS=':'
+  for entry in $list; do
+    [[ -n "$entry" ]] || continue
+    entry_real="$(retromac_realpath "$entry" 2>/dev/null || printf '%s' "$entry")"
+    skip_entry=0
+    for exclude_real in "${@:3}"; do
+      if [[ -n "$exclude_real" && "$entry_real" == "$exclude_real" ]]; then
+        skip_entry=1
+        break
+      fi
+    done
+    if [[ "$skip_entry" -eq 1 ]]; then
+      continue
+    fi
+    append_unique_media_path "$entry" "$target_name"
+  done
+  IFS="$OLDIFS"
 }
 
 handle_emulator_exit() {
@@ -80,14 +133,50 @@ handle_emulator_exit() {
 
 refresh_scanned_media() {
   local configured_cdrom=""
+  local boot_override=""
   local boot_real=""
   local extra_real=""
-  local scan_real=""
-  local filtered_scan=""
-  local scan_entry=""
+  local installer_real=""
+  local library_dir=""
+  local system_disk=""
+  local system_real=""
+  local library_disk=""
+  local -a library_disks=()
+  local -a library_cdroms=()
+  local -a pre_system_disks=()
+  local -a post_system_disks=()
+
+  system_disk="$(retromac_get_system_disk 2>/dev/null || true)"
+  if [[ -n "$system_disk" ]] && ! retromac_media_exists "$system_disk"; then
+    system_disk=""
+  fi
+  boot_override="$(retromac_get_boot_override 2>/dev/null || true)"
+  if [[ -n "$boot_override" ]] && ! retromac_media_exists "$boot_override"; then
+    boot_override=""
+  fi
+
+  system_real="$(retromac_realpath "$system_disk" 2>/dev/null || true)"
+  boot_real="$(retromac_realpath "$boot_override" 2>/dev/null || true)"
+  extra_real="$(retromac_realpath "${RETRO_MAC_EXTRA_DISK:-}" 2>/dev/null || true)"
+  installer_real="$(retromac_realpath "${RETRO_MAC_INSTALLER_DISK:-}" 2>/dev/null || true)"
+
+  RETRO_MAC_EFFECTIVE_SYSTEM_DISK="$system_disk"
+  RETRO_MAC_EFFECTIVE_PRE_SYSTEM_DISKS=""
+  RETRO_MAC_EFFECTIVE_POST_SYSTEM_DISKS=""
 
   if [[ "${RETRO_MAC_AUTOSCAN_MEDIA:-true}" != "true" ]]; then
-    RETRO_MAC_EFFECTIVE_ATTACH_DISKS="${RETRO_MAC_ATTACH_DISKS:-}"
+    if [[ -n "$boot_override" ]]; then
+      pre_system_disks+=("$boot_override")
+    fi
+    if [[ -n "${RETRO_MAC_INSTALLER_DISK:-}" ]] && retromac_media_exists "${RETRO_MAC_INSTALLER_DISK:-}"; then
+      post_system_disks+=("${RETRO_MAC_INSTALLER_DISK}")
+    fi
+    append_colon_list_to_media_array "${RETRO_MAC_ATTACH_DISKS:-}" post_system_disks "$system_real" "$boot_real" "$extra_real" "$installer_real"
+    if [[ -n "${RETRO_MAC_EXTRA_DISK:-}" ]] && retromac_media_exists "${RETRO_MAC_EXTRA_DISK:-}"; then
+      post_system_disks+=("${RETRO_MAC_EXTRA_DISK}")
+    fi
+    RETRO_MAC_EFFECTIVE_PRE_SYSTEM_DISKS="$(IFS=:; printf '%s' "${pre_system_disks[*]}")"
+    RETRO_MAC_EFFECTIVE_POST_SYSTEM_DISKS="$(IFS=:; printf '%s' "${post_system_disks[*]}")"
     RETRO_MAC_EFFECTIVE_CDROM_IMAGE="${RETRO_MAC_CDROM_IMAGE:-}"
     return 0
   fi
@@ -99,40 +188,79 @@ refresh_scanned_media() {
     source "${RETRO_MAC_RUNTIME_DIR}/scanned-media.env"
   fi
 
-  RETRO_MAC_EFFECTIVE_ATTACH_DISKS="${RETRO_MAC_ATTACH_DISKS:-}"
-  if [[ -n "${RETRO_MAC_SCANNED_ATTACH_DISKS:-}" ]]; then
-    boot_real="$(readlink -f "$RETRO_MAC_BOOT_IMAGE" 2>/dev/null || printf '%s' "$RETRO_MAC_BOOT_IMAGE")"
-    extra_real="$(readlink -f "${RETRO_MAC_EXTRA_DISK:-}" 2>/dev/null || printf '%s' "${RETRO_MAC_EXTRA_DISK:-}")"
+  if [[ -n "${RETRO_MAC_MEDIA_LIBRARY_DIRS:-}" ]]; then
     OLDIFS="$IFS"
     IFS=':'
-    for scan_entry in $RETRO_MAC_SCANNED_ATTACH_DISKS; do
-      [[ -n "$scan_entry" ]] || continue
-      scan_real="$(readlink -f "$scan_entry" 2>/dev/null || printf '%s' "$scan_entry")"
-      if [[ "$scan_real" == "$boot_real" || ( -n "$extra_real" && "$scan_real" == "$extra_real" ) ]]; then
-        continue
-      fi
-      if [[ -n "$filtered_scan" ]]; then
-        filtered_scan="${filtered_scan}:$scan_entry"
-      else
-        filtered_scan="$scan_entry"
-      fi
+    for library_dir in $RETRO_MAC_MEDIA_LIBRARY_DIRS; do
+      [[ -d "$library_dir" ]] || continue
+      collect_media_from_mount "$library_dir" library_disks library_cdroms
     done
     IFS="$OLDIFS"
 
-    if [[ -n "$filtered_scan" ]]; then
-      if [[ -n "$RETRO_MAC_EFFECTIVE_ATTACH_DISKS" ]]; then
-        RETRO_MAC_EFFECTIVE_ATTACH_DISKS="${RETRO_MAC_EFFECTIVE_ATTACH_DISKS}:${filtered_scan}"
-      else
-        RETRO_MAC_EFFECTIVE_ATTACH_DISKS="${filtered_scan}"
-      fi
+    if [[ -z "${RETRO_MAC_SCANNED_CDROM_IMAGE:-}" ]] && (( ${#library_cdroms[@]} > 0 )); then
+      RETRO_MAC_SCANNED_CDROM_IMAGE="${library_cdroms[0]}"
     fi
   fi
+
+  if [[ -n "$boot_override" ]]; then
+    pre_system_disks+=("$boot_override")
+    append_colon_list_to_media_array "${RETRO_MAC_SCANNED_PRE_SYSTEM_DISKS:-}" post_system_disks "$system_real" "$boot_real" "$extra_real" "$installer_real"
+  else
+    append_colon_list_to_media_array "${RETRO_MAC_SCANNED_PRE_SYSTEM_DISKS:-}" pre_system_disks "$system_real" "$extra_real" "$installer_real"
+  fi
+  append_colon_list_to_media_array "${RETRO_MAC_SCANNED_POST_SYSTEM_DISKS:-}" post_system_disks "$system_real" "$boot_real" "$extra_real" "$installer_real"
+
+  if [[ -n "${RETRO_MAC_INSTALLER_DISK:-}" ]] && retromac_media_exists "${RETRO_MAC_INSTALLER_DISK:-}"; then
+    post_system_disks+=("${RETRO_MAC_INSTALLER_DISK}")
+  fi
+  append_colon_list_to_media_array "${RETRO_MAC_ATTACH_DISKS:-}" post_system_disks "$system_real" "$boot_real" "$extra_real" "$installer_real"
+  for library_disk in "${library_disks[@]}"; do
+    append_unique_media_path "$library_disk" post_system_disks
+  done
+  if [[ -n "${RETRO_MAC_EXTRA_DISK:-}" ]] && retromac_media_exists "${RETRO_MAC_EXTRA_DISK:-}"; then
+    post_system_disks+=("${RETRO_MAC_EXTRA_DISK}")
+  fi
+
+  RETRO_MAC_EFFECTIVE_PRE_SYSTEM_DISKS="$(IFS=:; printf '%s' "${pre_system_disks[*]}")"
+  RETRO_MAC_EFFECTIVE_POST_SYSTEM_DISKS="$(IFS=:; printf '%s' "${post_system_disks[*]}")"
 
   configured_cdrom="${RETRO_MAC_CDROM_IMAGE:-}"
   if [[ -n "$configured_cdrom" ]]; then
     RETRO_MAC_EFFECTIVE_CDROM_IMAGE="$configured_cdrom"
   else
     RETRO_MAC_EFFECTIVE_CDROM_IMAGE="${RETRO_MAC_SCANNED_CDROM_IMAGE:-}"
+  fi
+}
+
+prime_configured_media() {
+  local path=""
+  local boot_override=""
+
+  boot_override="$(retromac_get_boot_override 2>/dev/null || true)"
+  if [[ -n "$boot_override" ]]; then
+    retromac_media_exists "$boot_override" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "${RETRO_MAC_INSTALLER_DISK:-}" ]]; then
+    retromac_media_exists "$RETRO_MAC_INSTALLER_DISK" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "${RETRO_MAC_CDROM_IMAGE:-}" ]]; then
+    retromac_media_exists "$RETRO_MAC_CDROM_IMAGE" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "${RETRO_MAC_ATTACH_DISKS:-}" ]]; then
+    OLDIFS="$IFS"
+    IFS=':'
+    for path in $RETRO_MAC_ATTACH_DISKS; do
+      [[ -n "$path" ]] || continue
+      retromac_media_exists "$path" >/dev/null 2>&1 || true
+    done
+    IFS="$OLDIFS"
+  fi
+
+  if [[ -n "${RETRO_MAC_EXTRA_DISK:-}" ]]; then
+    retromac_media_exists "$RETRO_MAC_EXTRA_DISK" >/dev/null 2>&1 || true
   fi
 }
 
@@ -191,24 +319,28 @@ EOF
     printf 'extfs /__retro_mac_extfs_disabled__\n' >>"$RETRO_MAC_PREFS_FILE"
   fi
 
-  if [[ -n "${RETRO_MAC_INSTALLER_DISK:-}" ]]; then
-    printf 'disk %s\n' "$RETRO_MAC_INSTALLER_DISK" >>"$RETRO_MAC_PREFS_FILE"
-  fi
-
-  if [[ -n "${RETRO_MAC_EFFECTIVE_ATTACH_DISKS:-}" ]]; then
+  if [[ -n "${RETRO_MAC_EFFECTIVE_PRE_SYSTEM_DISKS:-}" ]]; then
     OLDIFS="$IFS"
     IFS=':'
-    for disk_path in $RETRO_MAC_EFFECTIVE_ATTACH_DISKS; do
+    for disk_path in $RETRO_MAC_EFFECTIVE_PRE_SYSTEM_DISKS; do
       [[ -n "$disk_path" ]] || continue
       printf 'disk %s\n' "$disk_path" >>"$RETRO_MAC_PREFS_FILE"
     done
     IFS="$OLDIFS"
   fi
 
-  printf 'disk %s\n' "$RETRO_MAC_BOOT_IMAGE" >>"$RETRO_MAC_PREFS_FILE"
+  if [[ -n "${RETRO_MAC_EFFECTIVE_SYSTEM_DISK:-}" ]]; then
+    printf 'disk %s\n' "$RETRO_MAC_EFFECTIVE_SYSTEM_DISK" >>"$RETRO_MAC_PREFS_FILE"
+  fi
 
-  if [[ -n "${RETRO_MAC_EXTRA_DISK:-}" ]]; then
-    printf 'disk %s\n' "$RETRO_MAC_EXTRA_DISK" >>"$RETRO_MAC_PREFS_FILE"
+  if [[ -n "${RETRO_MAC_EFFECTIVE_POST_SYSTEM_DISKS:-}" ]]; then
+    OLDIFS="$IFS"
+    IFS=':'
+    for disk_path in $RETRO_MAC_EFFECTIVE_POST_SYSTEM_DISKS; do
+      [[ -n "$disk_path" ]] || continue
+      printf 'disk %s\n' "$disk_path" >>"$RETRO_MAC_PREFS_FILE"
+    done
+    IFS="$OLDIFS"
   fi
 
   if [[ "$RETRO_MAC_SESSION_MODE" == "direct-sdl" && -n "${RETRO_MAC_DIRECT_SDL_RENDER_DRIVER:-}" ]]; then
@@ -217,9 +349,12 @@ EOF
 }
 
 write_sheepshaver_prefs() {
+  local sheepshaver_disk=""
+
+  sheepshaver_disk="$(retromac_get_boot_override 2>/dev/null || retromac_get_system_disk 2>/dev/null || true)"
   cat >"$RETRO_MAC_PREFS_FILE" <<EOF
 rom $RETRO_MAC_ROM_PATH
-disk $RETRO_MAC_BOOT_IMAGE
+disk $sheepshaver_disk
 extfs $RETRO_MAC_SHARED_DIR
 screen win/${RETRO_MAC_RES_WIDTH}/${RETRO_MAC_RES_HEIGHT}
 windowmodes ${RETRO_MAC_RES_WIDTH}x${RETRO_MAC_RES_HEIGHT}x24
@@ -256,10 +391,14 @@ main() {
       exec "$RETRO_MAC_EMULATOR_BINARY" "$RETRO_MAC_BOOT_IMAGE"
       ;;
     basilisk2)
-      if [[ ! -f "$RETRO_MAC_ROM_PATH" ]] || ! retromac_media_exists "$RETRO_MAC_BOOT_IMAGE"; then
-        show_missing_message "Basilisk II needs a 68k ROM and a bootable Mac disk image."
-      fi
+      prime_configured_media
       refresh_scanned_media
+      if [[ ! -f "$RETRO_MAC_ROM_PATH" ]]; then
+        show_missing_message "Basilisk II needs a 68k ROM."
+      fi
+      if [[ -z "${RETRO_MAC_EFFECTIVE_PRE_SYSTEM_DISKS:-}" && -z "${RETRO_MAC_EFFECTIVE_SYSTEM_DISK:-}" && -z "${RETRO_MAC_EFFECTIVE_CDROM_IMAGE:-}" ]]; then
+        show_missing_message "Basilisk II needs Proxmox-attached boot media or a configured Macintosh HD."
+      fi
       write_basilisk_prefs
       if [[ "$RETRO_MAC_EMULATOR_BINARY" == /opt/retro-mac/basilisk2/appdir/* ]]; then
         export APPDIR="/opt/retro-mac/basilisk2/appdir"
@@ -293,7 +432,7 @@ main() {
       fi
       ;;
     sheepshaver)
-      if [[ ! -f "$RETRO_MAC_ROM_PATH" || ! -f "$RETRO_MAC_BOOT_IMAGE" ]]; then
+      if [[ ! -f "$RETRO_MAC_ROM_PATH" ]] || ! retromac_media_exists "$(retromac_get_boot_override 2>/dev/null || retromac_get_system_disk 2>/dev/null || true)"; then
         show_missing_message "SheepShaver needs a Power Mac ROM and a supported Mac OS disk image."
       fi
       write_sheepshaver_prefs
