@@ -6,7 +6,7 @@ The supported `v0.1` ROM is:
 
 - `Mac IIci.ROM`
 
-Expected guest path:
+Default guest path:
 
 ```text
 /mnt/retro-mac-data/roms/ii-ci.rom
@@ -18,15 +18,27 @@ The runtime expects:
 /var/lib/retro-mac/roms/ii-ci.rom
 ```
 
-which is linked back to the data disk.
+The exact provisioning path is up to you, but the runtime needs a legal Old World ROM available at the configured runtime location.
 
-## Supported Helper Or Installer Media
+## Supported Boot, Helper, Or Installer Media
 
-Recommended helper media:
+Recommended shared installer media:
 
-- `System7_5_3.img`
+- a curated HFS installer shelf image such as `Installers.img`
 
-Supported removable-media file types:
+Optional boot or helper media:
+
+- a legal System 7 boot or install disk image
+- additional classic Mac utility or recovery media
+
+Recommended model:
+
+- keep your full raw archive on storage you control
+- publish a curated sealed installer image for common software and installers
+- attach shared media only when needed
+- keep per-VM writable state on `Macintosh HD`
+
+Supported optional media file types:
 
 - `.img`
 - `.dsk`
@@ -35,22 +47,25 @@ Supported removable-media file types:
 - `.toast`
 - `.iso`
 
-## Removable Media Naming
+## Optional Media Naming
 
-Use numeric prefixes to control attach order:
+If you use a scanned helper-media workflow, numeric prefixes are the simplest way to control attach order:
 
-- `001-System7_5_3.img`
-- `010-InstallerDisk.img`
-- `020-Utilities.img`
+- `001-System-Install.img`
+- `010-Utilities.img`
+- `020-Apps.img`
 
-The appliance scans in sorted filename order.
+The appliance scans in sorted filename order when using that optional helper-media path.
+
+This ordering guidance is mainly for optional helper media, not for the shared canonical installer shelf.
 
 ## What The User Supplies
 
 Users bring their own:
 
 - ROM
-- helper or installer media
+- boot or installer media
+- optional curated shared installer shelf
 - optional extra classic Mac disks
 
 ## What The Repo Does Not Include
@@ -58,4 +73,4 @@ Users bring their own:
 - Apple ROM dumps
 - Apple installer media
 - preinstalled Mac OS images
-
+- curated software shelves

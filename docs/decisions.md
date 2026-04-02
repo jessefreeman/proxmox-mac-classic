@@ -45,25 +45,37 @@ Current default:
 - failed exit restarts the emulator session
 - the host waits briefly after `sync` before the power action to reduce HFS dirty-shutdown warnings
 
-Limitation:
-
-- Basilisk does not provide a clean host-facing distinction between guest shutdown and guest restart in this appliance flow, so the clean-exit host action is configurable rather than inferred separately for each menu action
-
 ## Dedicated `Macintosh HD`
 
-This project deliberately moved `Macintosh HD` onto a Proxmox-backed disk.
+This project deliberately keeps `Macintosh HD` on its own per-VM disk.
 
 That is the key decision that makes cloning safe and predictable.
 
-## Linux Filesystem Carrier For Removable Media
+## Clean Template First
 
-The removable slot uses a Linux filesystem carrier disk rather than raw CD emulation.
+The default template should boot with only its own `Macintosh HD`.
 
 Why:
 
-- easy to attach and remove in Proxmox
-- easy to populate with multiple Mac image files
-- easy to scan deterministically from guest scripts
+- pure clones are easier to reason about
+- pure clones can use normal Proxmox snapshots
+- shared media become an intentional operator action instead of silent background state
+
+## Optional Shared Boot And Installer Media
+
+The current direction is to keep shared boot or installer images outside the default template and attach them only when needed.
+
+Why:
+
+- one canonical installer shelf is easier to curate than many per-VM helper disks
+- it keeps the curated software layer separate from each VM's own `Macintosh HD`
+- it avoids shipping user-specific or copyrighted media in the repo
+- it lets operators choose whether a clone should be pure and snapshot-friendly or temporarily media-attached
+
+Constraint:
+
+- guest runtime and firstboot logic must never create, resize, or modify shared media
+- if shared media are attached directly as Proxmox disks, snapshot behavior depends on that storage path and may be unavailable
 
 ## Bootstrap Installer Over Fat Appliance Downloads
 

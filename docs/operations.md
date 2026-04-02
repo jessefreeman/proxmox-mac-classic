@@ -5,15 +5,16 @@
 Recommended roles:
 
 - base Debian bootstrap VM
-- installer-ready base template
-- proof clone
+- clean Proxmox template
+- day-to-day proof or work clone
+- source VM used to validate shared media updates
 - configured gold-master clone
 
 ## Safe Changes
 
 Use snapshots before:
 
-- changing helper media
+- changing optional shared media attachments
 - changing ROM path or ROM contents
 - changing disk sizing
 - changing guest runtime files
@@ -38,13 +39,30 @@ Prepare a VM to become a reusable Proxmox template:
 sudo ./scripts/install-on-debian.sh --prepare-template
 ```
 
+Attach optional shared media to a clone:
+
+```bash
+qm stop <vmid>
+qm set <vmid> --scsi2 <shared-storage>:<boot-volume>,media=disk,ro=1,backup=0,shared=1,snapshot=0
+qm set <vmid> --scsi5 <shared-storage>:<installers-volume>,media=disk,ro=1,backup=0,shared=1,snapshot=0
+qm start <vmid>
+```
+
+Detach optional shared media again:
+
+```bash
+qm stop <vmid>
+qm set <vmid> --delete scsi2 --delete scsi5
+qm start <vmid>
+```
+
 Check generated prefs:
 
 ```bash
 sed -n '1,120p' /var/lib/retro-mac/runtime/.basilisk_ii_prefs
 ```
 
-Check scanned removable media:
+Check scanned optional media:
 
 ```bash
 cat /var/lib/retro-mac/runtime/scanned-media.env
@@ -65,3 +83,14 @@ sudo retro-mac-validate-layout
 - `virtio` VGA
 - `tablet=1`
 - direct SDL console mode
+
+## Recommended Day-To-Day Pattern
+
+Use this as the default operating model:
+
+1. keep the template pure
+2. clone it
+3. boot from `Macintosh HD`
+4. take Proxmox snapshots as needed
+5. attach shared boot or installer media only for install, recovery, or curation work
+6. detach shared media again if you want snapshot support back
